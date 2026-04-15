@@ -1,0 +1,41 @@
+
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CÔ HUYỀN PRO - Hóa 10</title>
+    <script>
+      // Fix for "TypeError: Cannot set property fetch of #<Window> which has only a getter"
+      // This happens when some libraries (like node-fetch polyfills) try to overwrite window.fetch
+      (function() {
+        const originalFetch = window.fetch;
+        if (originalFetch) {
+          try {
+            Object.defineProperty(window, 'fetch', {
+              configurable: true,
+              enumerable: true,
+              get: function() {
+                return originalFetch;
+              },
+              set: function(v) {
+                console.warn('Something tried to overwrite window.fetch. Prevented.', v);
+              }
+            });
+          } catch (e) {
+            // If we can't redefine it, it might already be protected or non-configurable
+            console.warn('Could not redefine window.fetch property (it might be protected):', e);
+          }
+        }
+      })();
+    </script>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- KaTeX CSS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+    <link rel="stylesheet" href="/index.css">
+</head>
+<body>
+    <div id="root"></div>
+<script type="module" src="/index.tsx"></script>
+</body>
+</html>

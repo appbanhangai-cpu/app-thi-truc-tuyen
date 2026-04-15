@@ -1,0 +1,80 @@
+{
+  "questionBank": [
+    {
+      "id": "q1",
+      "type": "mcq",
+      "difficulty": "easy",
+      "content": "Nguyên tử được cấu tạo từ các loại hạt cơ bản nào?",
+      "options": [
+        "Proton và electron",
+        "Proton và neutron",
+        "Proton, neutron và electron",
+        "Neutron và electron"
+      ],
+      "correctAnswer": "Proton, neutron và electron",
+      "explanation": "Nguyên tử gồm hạt nhân (proton, neutron) và vỏ nguyên tử (electron).",
+      "tag": "Cấu tạo nguyên tử"
+    },
+    {
+      "id": "q2",
+      "type": "mcq",
+      "difficulty": "easy",
+      "content": "Hạt nào mang điện tích dương trong nguyên tử?",
+      "options": [
+        "Electron",
+        "Proton",
+        "Neutron",
+        "Hạt nhân"
+      ],
+      "correctAnswer": "Proton",
+      "explanation": "Proton mang điện tích dương (+1), electron mang điện tích âm (-1), neutron không mang điện.",
+      "tag": "Cấu tạo nguyên tử"
+    },
+    {
+      "id": "q3",
+      "type": "mcq",
+      "difficulty": "medium",
+      "content": "Ký hiệu hóa học của nguyên tố Sắt là gì?",
+      "options": [
+        "Fe",
+        "Cu",
+        "Al",
+        "Zn"
+      ],
+      "correctAnswer": "Fe",
+      "explanation": "Fe là ký hiệu của Ferrum (Sắt).",
+      "tag": "Bảng tuần hoàn"
+    },
+    {
+      "id": "q4",
+      "type": "mcq",
+      "difficulty": "medium",
+      "content": "Trong bảng tuần hoàn, các nguyên tố được sắp xếp theo chiều tăng dần của:",
+      "options": [
+        "Khối lượng nguyên tử",
+        "Số hiệu nguyên tử (điện tích hạt nhân)",
+        "Số neutron",
+        "Số lớp electron"
+      ],
+      "correctAnswer": "Số hiệu nguyên tử (điện tích hạt nhân)",
+      "explanation": "Định luật tuần hoàn: Tính chất các nguyên tố biến thiên tuần hoàn theo chiều tăng của điện tích hạt nhân.",
+      "tag": "Bảng tuần hoàn"
+    },
+    {
+      "id": "q5",
+      "type": "mcq",
+      "difficulty": "hard",
+      "content": "Cấu hình electron của nguyên tử Natri (Z=11) là:",
+      "options": [
+        "1s² 2s² 2p⁶",
+        "1s² 2s² 2p⁶ 3s¹",
+        "1s² 2s² 2p⁶ 3s²",
+        "1s² 2s² 2p⁵ 3s¹"
+      ],
+      "correctAnswer": "1s² 2s² 2p⁶ 3s¹",
+      "explanation": "Tổng số electron là 11, phân bố vào các phân lớp theo thứ tự năng lượng.",
+      "tag": "Vỏ nguyên tử"
+    }
+  ],
+  "allowTranslation": true
+}

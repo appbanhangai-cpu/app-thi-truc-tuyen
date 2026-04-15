@@ -1,0 +1,7 @@
+{
+  "name": "Ứng dụng ôn tập - CÔ HUYỀN PRO - Đưa lên Web",
+  "description": "Ứng dụng ôn tập Hóa học lớp 10 với vòng quay may mắn và câu hỏi cá nhân hóa được tạo bởi AI.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
