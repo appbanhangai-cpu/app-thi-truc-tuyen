@@ -57,7 +57,8 @@ import {
   CreditCard,
   Activity,
   Table,
-  Check
+  Check,
+  Grid3X3
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import mammoth from 'mammoth';
@@ -219,11 +220,17 @@ const App: React.FC = () => {
     mcqRatio: 70,
     keywords: '',
     language: 'auto', // 'auto' | 'vi' | 'en'
+    aiLanguage: 'vi', // New property for AI question types language
     optionsCount: 4, // Mặc định là 4 theo yêu cầu mới
     subject: 'Anh văn',
     educationLevel: EducationLevel.HIGH_SCHOOL,
     languageMode: LanguageMode.GENERAL,
     questionCategories: [QuestionCategory.VOCABULARY, QuestionCategory.GRAMMAR],
+    categoryCounts: {
+      [QuestionCategory.VOCABULARY]: 25,
+      [QuestionCategory.GRAMMAR]: 25,
+    } as Record<string, number>,
+    lockedCategories: [] as string[],
     shuffleAnswers: true,
     flashcards: true
   });
@@ -1345,12 +1352,13 @@ const App: React.FC = () => {
           difficulty: questionConfig.difficulty,
           mcqRatio: questionConfig.mcqRatio,
           keywords: questionConfig.keywords,
-          language: questionConfig.language,
+          language: questionConfig.aiLanguage,
           optionsCount: questionConfig.optionsCount,
           subject: questionConfig.subject,
           educationLevel: questionConfig.educationLevel,
           languageMode: questionConfig.languageMode,
-          questionCategories: questionConfig.questionCategories
+          questionCategories: questionConfig.questionCategories,
+          categoryCounts: questionConfig.categoryCounts
         },
         lessonParsed.mediaFiles
       );
@@ -4112,7 +4120,28 @@ const App: React.FC = () => {
                           type="number" 
                           className="w-full bg-slate-900/50 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-purple-500 shadow-inner" 
                           value={questionConfig.count} 
-                          onChange={e => setQuestionConfig(prev => ({...prev, count: parseInt(e.target.value) || 0}))} 
+                          onChange={e => {
+                            const val = parseInt(e.target.value) || 0;
+                            setQuestionConfig(prev => {
+                              const cats = prev.questionCategories;
+                              const locked = prev.lockedCategories;
+                              const nonLocked = cats.filter(c => !locked.includes(c));
+                              const newCounts = { ...prev.categoryCounts };
+                              
+                              if (nonLocked.length > 0) {
+                                const lockedSum = locked.reduce((sum, c) => sum + (newCounts[c] || 0), 0);
+                                const remaining = Math.max(0, val - lockedSum);
+                                const baseCount = Math.floor(remaining / nonLocked.length);
+                                const remainder = remaining % nonLocked.length;
+                                
+                                nonLocked.forEach((c, idx) => {
+                                  newCounts[c] = baseCount + (idx < remainder ? 1 : 0);
+                                });
+                              }
+                              
+                              return { ...prev, count: val, categoryCounts: newCounts };
+                            });
+                          }} 
                         />
                       </div>
                       <div>
@@ -4128,9 +4157,9 @@ const App: React.FC = () => {
                         </select>
                       </div>
                     </div>
- 
+
                     <div>
-                      <label className="text-[8px] font-black text-blue-400 uppercase block mb-1.5 tracking-widest">Ngôn ngữ hiển thị</label>
+                      <label className="text-[8px] font-black text-blue-400 uppercase block mb-1.5 tracking-widest">Ngôn ngữ hiển thị cho bài thi</label>
                       <div className="grid grid-cols-3 gap-1.5">
                         {[
                           { val: 'vi', label: 'Tiếng Việt' },
@@ -4153,12 +4182,12 @@ const App: React.FC = () => {
                     </div>
                   </div>
                 </div>
- 
-                {/* Column 2: Modes & Types */}
+
+                {/* Column 2: Question Type Matrix */}
                 <div className="space-y-3">
                   <div className="flex items-center gap-2 mb-1">
-                    <Layers className="w-3.5 h-3.5 text-rose-400" />
-                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Chế độ & Phân loại</span>
+                    <Grid3X3 className="w-3.5 h-3.5 text-rose-400" />
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Ma trận câu hỏi</span>
                   </div>
                   
                   <div className="glass p-3 rounded-xl border-rose-500/20 space-y-4">
@@ -4198,24 +4227,39 @@ const App: React.FC = () => {
                         ))}
                       </div>
                     </div>
- 
+
                     <div>
                       <div className="flex justify-between items-center mb-2">
                         <label className="text-[8px] font-black text-rose-400 uppercase tracking-widest">Loại câu hỏi AI tạo</label>
-                        <div className="flex gap-1">
+                        
+                        <div className="flex items-center gap-3">
+                          <div className="flex items-center gap-1.5 px-2 py-0.5 bg-rose-500/10 border border-rose-500/20 rounded-full">
+                            <span className="text-[9px] font-black text-rose-400 uppercase tracking-tighter">Tổng:</span>
+                            <span className={`text-[10px] font-black ${
+                              questionConfig.questionCategories.reduce((sum, cat) => sum + (questionConfig.categoryCounts[cat] || 0), 0) === questionConfig.count 
+                                ? 'text-emerald-400' 
+                                : 'text-amber-400'
+                            }`}>
+                              {questionConfig.questionCategories.reduce((sum, cat) => sum + (questionConfig.categoryCounts[cat] || 0), 0)}
+                            </span>
+                            <span className="text-[8px] font-bold text-slate-500">/</span>
+                            <span className="text-[10px] font-black text-slate-300">{questionConfig.count}</span>
+                          </div>
+
+                          <div className="flex gap-1">
                           <button 
-                            onClick={() => setQuestionConfig(prev => ({...prev, language: 'vi'}))}
+                            onClick={() => setQuestionConfig(prev => ({...prev, aiLanguage: 'vi'}))}
                             className={`w-5 h-5 flex items-center justify-center rounded text-[8px] font-bold transition-all border ${
-                              questionConfig.language === 'vi' 
+                              questionConfig.aiLanguage === 'vi' 
                                 ? 'bg-rose-600 border-rose-400 text-white shadow-lg shadow-rose-600/20' 
                                 : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-slate-500'
                             }`}
                             title="Tiếng Việt"
                           >V</button>
                           <button 
-                            onClick={() => setQuestionConfig(prev => ({...prev, language: 'en'}))}
+                            onClick={() => setQuestionConfig(prev => ({...prev, aiLanguage: 'en'}))}
                             className={`w-5 h-5 flex items-center justify-center rounded text-[8px] font-bold transition-all border ${
-                              questionConfig.language === 'en' 
+                              questionConfig.aiLanguage === 'en' 
                                 ? 'bg-rose-600 border-rose-400 text-white shadow-lg shadow-rose-600/20' 
                                 : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-slate-500'
                             }`}
@@ -4223,32 +4267,145 @@ const App: React.FC = () => {
                           >E</button>
                         </div>
                       </div>
-                      <div className="grid grid-cols-2 gap-1.5">
-                        {Object.values(QuestionCategory).map(cat => (
-                          <button 
-                            key={cat} 
-                            title={categoryTooltips[cat] || cat}
-                            onClick={() => {
-                              setQuestionConfig(prev => {
-                                const isSelected = prev.questionCategories.includes(cat);
-                                const cats = [...prev.questionCategories];
-                                if (isSelected) {
-                                  if (cats.length > 1) return { ...prev, questionCategories: cats.filter(c => c !== cat) };
-                                  return prev;
-                                } else {
-                                  return { ...prev, questionCategories: [...cats, cat] };
-                                }
-                              });
-                            }} 
-                            className={`px-1 py-2 rounded-lg text-[9px] font-black border transition-all text-center ${
-                              questionConfig.questionCategories.includes(cat) 
-                                ? 'bg-rose-600 border-rose-400 text-white shadow-lg shadow-rose-600/30' 
-                                : 'bg-slate-800/50 border-slate-700 text-white hover:border-slate-500 hover:bg-slate-800'
-                            }`}
-                          >
-                            {questionConfig.language === 'vi' ? (categoryTranslations[cat] || cat) : cat}
-                          </button>
-                        ))}
+                    </div>
+                    <div className="grid grid-cols-2 gap-1.5">
+                        {Object.values(QuestionCategory).map(cat => {
+                          const isSelected = questionConfig.questionCategories.includes(cat);
+                          const currentCount = questionConfig.categoryCounts[cat] || 0;
+                          
+                          return (
+                            <div key={cat} className="relative group/cat">
+                              <button 
+                                title={categoryTooltips[cat] || cat}
+                                onClick={() => {
+                                  setQuestionConfig(prev => {
+                                    const isSelected = prev.questionCategories.includes(cat);
+                                    const cats = [...prev.questionCategories];
+                                    const newCounts = { ...prev.categoryCounts };
+                                    const locked = prev.lockedCategories;
+                                    
+                                    if (isSelected) {
+                                      if (cats.length > 1) {
+                                        const remainingCats = cats.filter(c => c !== cat);
+                                        const newLocked = locked.filter(c => c !== cat);
+                                        delete newCounts[cat];
+                                        
+                                        // Redistribute count to remaining categories, respecting locked
+                                        const nextNonLocked = remainingCats.filter(c => !newLocked.includes(c));
+                                        if (nextNonLocked.length > 0) {
+                                          const totalCount = prev.count;
+                                          const lockedSum = newLocked.reduce((sum, c) => sum + (newCounts[c] || 0), 0);
+                                          const remaining = Math.max(0, totalCount - lockedSum);
+                                          
+                                          const baseCount = Math.floor(remaining / nextNonLocked.length);
+                                          const remainder = remaining % nextNonLocked.length;
+                                          
+                                          nextNonLocked.forEach((c, idx) => {
+                                            newCounts[c] = baseCount + (idx < remainder ? 1 : 0);
+                                          });
+                                        }
+
+                                        return { ...prev, questionCategories: remainingCats, categoryCounts: newCounts, lockedCategories: newLocked };
+                                      }
+                                      return prev;
+                                    } else {
+                                      const newCats = [...cats, cat];
+                                      const nonLocked = newCats.filter(c => !locked.includes(c));
+                                      
+                                      // Redistribute count, respecting locked
+                                      if (nonLocked.length > 0) {
+                                        const totalCount = prev.count;
+                                        const lockedSum = locked.reduce((sum, c) => sum + (newCounts[c] || 0), 0);
+                                        const remaining = Math.max(0, totalCount - lockedSum);
+                                        
+                                        const baseCount = Math.floor(remaining / nonLocked.length);
+                                        const remainder = remaining % nonLocked.length;
+                                        
+                                        nonLocked.forEach((c, idx) => {
+                                          newCounts[c] = baseCount + (idx < remainder ? 1 : 0);
+                                        });
+                                      }
+
+                                      return { ...prev, questionCategories: newCats, categoryCounts: newCounts };
+                                    }
+                                  });
+                                }} 
+                                className={`w-full flex justify-between items-center px-3 py-2 rounded-lg text-[9px] font-black border transition-all ${
+                                  isSelected 
+                                    ? 'bg-rose-600 border-rose-400 text-white shadow-lg shadow-rose-600/30' 
+                                    : 'bg-slate-800/50 border-slate-700 text-white hover:border-slate-500 hover:bg-slate-800'
+                                }`}
+                              >
+                                <div className="flex items-center gap-2 overflow-hidden">
+                                  {isSelected && (
+                                    <button 
+                                      title="Khóa số câu đã đặt"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setQuestionConfig(prev => {
+                                          const isLocked = prev.lockedCategories.includes(cat);
+                                          const newLocked = isLocked 
+                                            ? prev.lockedCategories.filter(c => c !== cat)
+                                            : [...prev.lockedCategories, cat];
+                                          return { ...prev, lockedCategories: newLocked };
+                                        });
+                                      }}
+                                      className={`w-4 h-4 rounded border flex items-center justify-center transition-all ${
+                                        questionConfig.lockedCategories.includes(cat)
+                                          ? 'bg-lime-500 border-lime-400 text-black shadow-lg shadow-lime-500/20'
+                                          : 'bg-black/20 border-white/10 text-transparent'
+                                      }`}
+                                    >
+                                      <Check className="w-2.5 h-2.5" />
+                                    </button>
+                                  )}
+                                  <span className="truncate">
+                                    {questionConfig.aiLanguage === 'vi' ? (categoryTranslations[cat] || cat) : cat}
+                                  </span>
+                                </div>
+                                
+                                {isSelected && (
+                                  <input 
+                                    type="number"
+                                    value={currentCount}
+                                    onClick={(e) => e.stopPropagation()}
+                                    onChange={(e) => {
+                                      const val = parseInt(e.target.value) || 0;
+                                      setQuestionConfig(prev => {
+                                        const otherCats = prev.questionCategories.filter(c => c !== cat);
+                                        if (otherCats.length === 0) return { ...prev, count: val, categoryCounts: { [cat]: val } };
+                                        
+                                        const locked = prev.lockedCategories;
+                                        const otherNonLocked = otherCats.filter(c => !locked.includes(c));
+                                        
+                                        const maxAllowed = prev.count;
+                                        const newVal = Math.min(val, maxAllowed);
+                                        const newCounts = { ...prev.categoryCounts, [cat]: newVal };
+                                        
+                                        const lockedSumExcludingThis = otherCats.filter(c => locked.includes(c)).reduce((sum, c) => sum + (newCounts[c] || 0), 0);
+                                        const remaining = Math.max(0, maxAllowed - newVal - lockedSumExcludingThis);
+
+                                        if (otherNonLocked.length > 0) {
+                                          const baseCount = Math.floor(remaining / otherNonLocked.length);
+                                          const remainder = remaining % otherNonLocked.length;
+                                          
+                                          otherNonLocked.forEach((c, idx) => {
+                                            newCounts[c] = baseCount + (idx < remainder ? 1 : 0);
+                                          });
+                                        }
+
+                                        return { ...prev, categoryCounts: newCounts };
+                                      });
+                                    }}
+                                    className={`w-8 bg-black/20 border-none text-right outline-none focus:ring-0 p-0 text-[10px] font-black transition-colors ${
+                                      questionConfig.lockedCategories.includes(cat) ? 'text-lime-400' : 'text-white/90'
+                                    }`}
+                                  />
+                                )}
+                              </button>
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                   </div>
@@ -4320,7 +4477,7 @@ const App: React.FC = () => {
                           onChange={e => setQuestionConfig(prev => ({...prev, mcqRatio: parseInt(e.target.value)}))} 
                           className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-amber-500" 
                         />
-                        <div className="flex justify-between mt-1 text-[6px] text-slate-600 font-black uppercase tracking-tighter">
+                        <div className="flex justify-between mt-1 text-[6px] text-blue-400 font-black uppercase tracking-tighter">
                           <span>Tự luận</span>
                           <span>Cân bằng</span>
                           <span>Trắc nghiệm</span>
@@ -4411,7 +4568,7 @@ const App: React.FC = () => {
                     </div>
 
                     <div>
-                      <label className="text-[8px] font-black text-slate-500 uppercase block mb-1.5 tracking-widest">Từ khóa trọng tâm</label>
+                      <label className="text-[8px] font-black text-lime-400 uppercase block mb-1.5 tracking-widest">Từ khóa trọng tâm</label>
                       <textarea 
                         rows={1} 
                         className="w-full bg-slate-900/50 border border-slate-800 rounded-lg p-2 text-xs text-white outline-none resize-none focus:border-amber-500/50 transition-all shadow-inner" 

@@ -144,6 +144,7 @@ export const generateQuestions = async (
     educationLevel?: string;
     languageMode?: string;
     questionCategories?: string[];
+    categoryCounts?: Record<string, number>;
   },
   mediaFiles?: {data: string, mimeType: string}[]
 ): Promise<Question[]> => {
@@ -158,7 +159,9 @@ export const generateQuestions = async (
   MÔN HỌC: ${config.subject || 'Chưa xác định'}
   CẤP ĐỘ: ${config.educationLevel || 'Trung học phổ thông'}
   CHẾ ĐỘ: ${config.languageMode || 'Chế độ kiểm tra chung'}
-  LOẠI CÂU HỎI: ${config.questionCategories?.join(', ') || 'Hỗn hợp'}
+  PHÂN BỔ CÂU HỎI:
+  ${config.questionCategories?.map(cat => `- ${cat}: ${config.categoryCounts?.[cat] || 0} câu`).join('\n') || 'Hỗn hợp'}
+  TỔNG CỘNG: ${config.count} câu
   `;
 
   const isEnglishSubject = config.subject?.toLowerCase().includes('anh') || config.subject?.toLowerCase().includes('english') || config.language === 'en';
@@ -193,6 +196,10 @@ export const generateQuestions = async (
 
   const systemInstruction = `BẠN LÀ CHUYÊN GIA THIẾT KẾ ĐỀ THI VỚI KHẢ NĂNG PHÂN TÍCH HÌNH ẢNH CỰC KỲ CHÍNH XÁC. 
   
+  QUY TẮC PHÂN BỔ CÂU HỎI (BẮT BUỘC):
+  - Bạn PHẢI tạo đúng số lượng câu hỏi cho mỗi loại (tag) như đã yêu cầu trong phần PHÂN BỔ CÂU HỎI.
+  - Tổng số câu hỏi phải khớp chính xác với TỔNG CỘNG.
+
   ${vocabularyPrompt}
 
   QUY TẮC TỐI THƯỢNG VỀ SCHEMA JSON (BẮT BUỘC):
@@ -287,43 +294,57 @@ export const generateQuestions = async (
     // Chuẩn hóa câu hỏi: xử lý nhãn A, B, C, D và xáo trộn đáp án
     return questions.map((q: any) => {
       if (q.options && q.options.length > 0) {
-        // 1. Xác định nội dung thực sự của đáp án đúng
+        // 1. Làm sạch các tùy chọn (loại bỏ tiền tố "A. ", "B) ", "C: " nếu có)
+        const cleanText = (t: string) => {
+          if (typeof t !== 'string') return String(t);
+          return t.replace(/^[A-Z][-.)\s:]+\s*/i, '').trim();
+        };
+        
+        const cleanedOptions = q.options.map(cleanText);
+        
+        // 2. Xác định nội dung thực sự của đáp án đúng
         let actualCorrectText = q.correctAnswer || "";
         const trimmedCorrect = String(actualCorrectText).trim();
         
-        // Nếu correctAnswer chỉ là một chữ cái (A, B, C, D...)
-        if (trimmedCorrect.length === 1 && /^[A-Z]$/i.test(trimmedCorrect)) {
-          const letter = trimmedCorrect.toUpperCase();
-          // Tìm option bắt đầu bằng chữ cái đó (ví dụ "A." hoặc "A ")
+        // Kiểm tra xem correctAnswer có phải là một nhãn (A, B, C, D, A., B), v.v.) không
+        const labelMatch = trimmedCorrect.match(/^([A-Z])[-.)\s:]*$/i);
+        
+        if (labelMatch) {
+          const letter = labelMatch[1].toUpperCase();
+          const index = letter.charCodeAt(0) - 65;
+          
+          // Ưu tiên tìm trong options gốc xem có cái nào bắt đầu bằng nhãn này không
           const foundOption = q.options.find((opt: string) => {
             const tOpt = String(opt).trim().toUpperCase();
-            return tOpt.startsWith(letter + ".") || tOpt.startsWith(letter + " ");
+            return tOpt.startsWith(letter + ".") || 
+                   tOpt.startsWith(letter + ")") || 
+                   tOpt.startsWith(letter + ":") || 
+                   tOpt.startsWith(letter + " ");
           });
           
           if (foundOption) {
-            actualCorrectText = foundOption;
+            actualCorrectText = cleanText(foundOption);
+          } else if (index >= 0 && index < cleanedOptions.length) {
+            // Nếu không tìm thấy theo nhãn trong text, dùng index
+            actualCorrectText = cleanedOptions[index];
           } else {
-            // Nếu không tìm thấy theo nhãn, thử dùng chữ cái như một chỉ số (A=0, B=1...)
-            const index = letter.charCodeAt(0) - 65;
-            if (index >= 0 && index < q.options.length) {
-              actualCorrectText = q.options[index];
-            }
+            actualCorrectText = cleanText(trimmedCorrect);
           }
+        } else {
+          actualCorrectText = cleanText(trimmedCorrect);
         }
 
-        // 2. Làm sạch các tùy chọn (loại bỏ tiền tố "A. ", "B. " nếu có)
-        const cleanText = (t: string) => String(t).replace(/^[A-Z][.\s]\s*/i, '').trim();
-        
-        const cleanedOptions = q.options.map(cleanText);
-        const cleanedCorrect = cleanText(actualCorrectText);
-
-        // 3. Xáo trộn ngẫu nhiên
-        const shuffled = [...cleanedOptions].sort(() => Math.random() - 0.5);
+        // 3. Xáo trộn ngẫu nhiên (Fisher-Yates shuffle cho chất lượng tốt hơn)
+        const shuffled = [...cleanedOptions];
+        for (let i = shuffled.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+        }
 
         return {
           ...q,
           options: shuffled,
-          correctAnswer: cleanedCorrect
+          correctAnswer: actualCorrectText
         };
       }
       return q;
