@@ -144,27 +144,39 @@ async function startServer() {
   const handleResultsSubmission = async (req: express.Request, res: express.Response) => {
     try {
       const result = req.body;
-      console.log(`[API] Received submission for student: ${result?.name || 'Unknown'}`);
+      console.log(`[API] Received submission request for student: ${result?.name || 'Unknown'}`);
+      console.log(`[API] Request body size: ${JSON.stringify(req.body).length} bytes`);
       
-      if (!result) return res.status(400).json({ error: "Missing result data" });
+      if (!result || Object.keys(result).length === 0) {
+        console.error("[API] Submission failed: Empty request body");
+        return res.status(400).json({ error: "Missing result data or empty body" });
+      }
+
       if (!result.id) result.id = `res_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      
       const exists = state.examResults.some((r: any) => r.id === result.id);
       if (!exists) {
         state.examResults = [result, ...state.examResults];
         saveData(state);
         syncToDrive();
       }
+
       const googleSheetUrl = getGoogleSheetUrl();
+      console.log(`[API] Syncing to Google Sheet: ${googleSheetUrl.substring(0, 50)}...`);
+
       const rank = result.score >= 9 ? "Xuất sắc" : result.score >= 8 ? "Giỏi" : result.score >= 6.5 ? "Khá" : result.score >= 5 ? "Trung bình" : "Yếu";
       const ts = result.timestamp || Date.now();
       const vnOptions: Intl.DateTimeFormatOptions = { timeZone: 'Asia/Ho_Chi_Minh', hour12: false };
+      
       let displayName = result.name || "N/A";
       let displayClass = result.className || "N/A";
+      
       if (displayName && String(displayName).includes('+')) {
         const parts = String(displayName).split('+');
         displayName = parts[0].trim();
         displayClass = parts[1].trim();
       }
+
       const sheetData = {
         sheetName: "BangDiem", 
         name: String(displayName), 
@@ -177,25 +189,55 @@ async function startServer() {
         date: new Date(ts).toLocaleDateString('vi-VN', vnOptions), 
         time: new Date(ts).toLocaleTimeString('vi-VN', vnOptions)
       };
+
       let syncResult = "initiated";
       let attempt = 0;
+      let lastErrorMsg = "";
+
       while (attempt <= 2 && syncResult !== "success") {
         attempt++;
         try {
+          console.log(`[API] Google Sheet Sync Attempt ${attempt}...`);
           const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 10000);
-          const response = await fetch(googleSheetUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sheetData), redirect: 'follow', signal: controller.signal });
+          const timeoutId = setTimeout(() => controller.abort(), 15000);
+          
+          const response = await fetch(googleSheetUrl, { 
+            method: 'POST', 
+            headers: { 'Content-Type': 'application/json' }, 
+            body: JSON.stringify(sheetData), 
+            redirect: 'follow', 
+            signal: controller.signal 
+          });
+          
           clearTimeout(timeoutId);
           const respText = await response.text();
-          if (response.ok || respText.toLowerCase().includes("success")) syncResult = "success";
-          else syncResult = `failed: ${response.status}`;
+          
+          console.log(`[API] Google Sheet Response (Status ${response.status}):`, respText.substring(0, 100));
+
+          if (response.ok || respText.toLowerCase().includes("success")) {
+            syncResult = "success";
+          } else {
+            syncResult = `failed: ${response.status}`;
+            lastErrorMsg = respText.substring(0, 100);
+          }
         } catch (error: any) {
+          console.error(`[API] Google Sheet Sync Attempt ${attempt} Error:`, error.message);
           syncResult = `error: ${error.message}`;
-          if (attempt <= 2) await new Promise(resolve => setTimeout(resolve, 1500));
+          lastErrorMsg = error.message;
+          if (attempt <= 2) await new Promise(resolve => setTimeout(resolve, 2000));
         }
       }
-      res.json({ success: syncResult === "success", sheetSync: syncResult });
-    } catch (e: any) { res.status(500).json({ error: e.message }); }
+
+      console.log(`[API] Final submission status for ${displayName}: ${syncResult}`);
+      return res.status(200).json({ 
+        success: syncResult === "success", 
+        sheetSync: syncResult,
+        details: syncResult !== "success" ? lastErrorMsg : undefined
+      });
+    } catch (e: any) { 
+      console.error("[API] Critical error in handleResultsSubmission:", e);
+      return res.status(500).json({ error: e.message }); 
+    }
   };
 
   apiRouter.get("/health", (req, res) => res.json({ status: "ok", version: "1.0.5" }));
@@ -211,7 +253,9 @@ async function startServer() {
   });
   apiRouter.get("/results", (req, res) => res.json(state.examResults));
   apiRouter.post("/submit-results", handleResultsSubmission);
+  apiRouter.post("/submit-results/", handleResultsSubmission);
   apiRouter.post("/results", handleResultsSubmission);
+  apiRouter.post("/results/", handleResultsSubmission);
   apiRouter.post("/config/sheet", (req, res) => {
     if (req.body.url !== undefined) { state.googleSheetUrl = req.body.url; saveData(state); res.json({ success: true }); }
     else res.status(400).json({ error: "Missing url" });

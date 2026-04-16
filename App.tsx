@@ -139,7 +139,8 @@ async function safeFetchJson(url: string, options?: RequestInit, retries = 2) {
       }
 
       if (!contentType.includes("application/json")) {
-        const preview = text.trim().substring(0, 50).replace(/<[^>]*>?/gm, '');
+        const preview = text.trim().substring(0, 100).replace(/<[^>]*>?/gm, '');
+        console.error(`[Network] Non-JSON response from ${url}:`, { contentType, preview });
         lastError = new Error(`Dữ liệu không phải JSON (${contentType}). Nội dung: "${preview}..." (Status: ${res.status})`);
         continue;
       }
@@ -181,6 +182,28 @@ const CroppedImage: React.FC<{ src: string, box: number[], alt: string, classNam
       />
     </div>
   );
+};
+
+const categoryTooltips: Record<string, string> = {
+  [QuestionCategory.VOCABULARY]: "Kiểm tra vốn từ vựng, nghĩa của từ và cách dùng từ.",
+  [QuestionCategory.GRAMMAR]: "Kiểm tra các cấu trúc ngữ pháp, thì của động từ, v.v.",
+  [QuestionCategory.READING]: "Đọc đoạn văn và trả lời các câu hỏi liên quan.",
+  [QuestionCategory.PRONUNCIATION]: "Kiểm tra cách phát âm các nguyên âm, phụ âm.",
+  [QuestionCategory.WORD_STRESS]: "Kiểm tra vị trí trọng âm của từ.",
+  [QuestionCategory.COMMUNICATION]: "Các tình huống giao tiếp, đáp lại lời nói.",
+  [QuestionCategory.SENTENCE_TRANSFORMATION]: "Viết lại câu sao cho nghĩa không đổi.",
+  [QuestionCategory.ERROR_IDENTIFICATION]: "Tìm và sửa lỗi sai trong câu."
+};
+
+const categoryTranslations: Record<string, string> = {
+  [QuestionCategory.VOCABULARY]: "Từ vựng",
+  [QuestionCategory.GRAMMAR]: "Ngữ pháp",
+  [QuestionCategory.READING]: "Đọc hiểu",
+  [QuestionCategory.PRONUNCIATION]: "Phát âm",
+  [QuestionCategory.WORD_STRESS]: "Trọng âm",
+  [QuestionCategory.COMMUNICATION]: "Giao tiếp",
+  [QuestionCategory.SENTENCE_TRANSFORMATION]: "Viết lại câu",
+  [QuestionCategory.ERROR_IDENTIFICATION]: "Tìm lỗi sai"
 };
 
 const App: React.FC = () => {
@@ -1605,47 +1628,75 @@ const App: React.FC = () => {
       const { jsPDF } = await import("jspdf");
       const doc = new jsPDF();
       
+      // Tải font hỗ trợ tiếng Việt (Roboto) từ CDN
+      const fontUrl = "https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.66/fonts/Roboto/Roboto-Regular.ttf";
+      const fontRes = await fetch(fontUrl);
+      const fontBuffer = await fontRes.arrayBuffer();
+      
+      // Chuyển đổi ArrayBuffer sang Base64
+      const fontBase64 = btoa(
+        new Uint8Array(fontBuffer)
+          .reduce((data, byte) => data + String.fromCharCode(byte), '')
+      );
+
+      // Thêm font vào jsPDF
+      doc.addFileToVFS("Roboto-Regular.ttf", fontBase64);
+      doc.addFont("Roboto-Regular.ttf", "Roboto", "normal");
+      doc.setFont("Roboto");
+      
       doc.setFontSize(16);
-      doc.text(`NGAN HANG CAU HOI - ${(downloadInfo.class || className).toUpperCase()}`, 105, 20, { align: 'center' });
+      doc.text(`NGÂN HÀNG CÂU HỎI - ${(downloadInfo.class || className).toUpperCase()}`, 105, 20, { align: 'center' });
       
       doc.setFontSize(12);
-      doc.text(`Ho va ten: ${downloadInfo.name || '........................'}   Lop: ${downloadInfo.class || className}`, 105, 30, { align: 'center' });
+      doc.text(`Họ và tên: ${downloadInfo.name || '........................'}   Lớp: ${downloadInfo.class || className}`, 105, 30, { align: 'center' });
       
-      let y = 40;
+      let y = 45;
+      const margin = 15;
+      const pageWidth = 210;
+      const contentWidth = pageWidth - (margin * 2);
       
       questionBank.forEach((q, idx) => {
-        if (y > 270) {
+        if (y > 260) {
           doc.addPage();
+          doc.setFont("Roboto");
           y = 20;
         }
         
-        const content = `Cau ${idx + 1}: ${q.content.replace(/\$/g, '')}`;
-        const lines = doc.splitTextToSize(content, 180);
-        doc.text(lines, 15, y);
+        // Loại bỏ các thẻ HTML và ký tự $
+        const cleanContent = q.content.replace(/<[^>]*>?/gm, '').replace(/\$/g, '');
+        const content = `Câu ${idx + 1}: ${cleanContent}`;
+        const lines = doc.splitTextToSize(content, contentWidth);
+        doc.text(lines, margin, y);
         y += lines.length * 7;
         
+        // Hiển thị các phương án trên cùng 1 hàng
+        let optionsRow = "";
         q.options.forEach((opt, oIdx) => {
-          if (y > 270) { doc.addPage(); y = 20; }
           const label = String.fromCharCode(65 + oIdx);
-          const optText = `${label}. ${opt.replace(/\$/g, '')}`;
-          const optLines = doc.splitTextToSize(optText, 170);
-          doc.text(optLines, 25, y);
-          y += optLines.length * 7;
+          const cleanOpt = opt.replace(/<[^>]*>?/gm, '').replace(/\$/g, '');
+          optionsRow += `${label}. ${cleanOpt}    `;
         });
         
-        if (y > 270) { doc.addPage(); y = 20; }
+        if (y > 260) { doc.addPage(); doc.setFont("Roboto"); y = 20; }
+        const optLines = doc.splitTextToSize(optionsRow.trim(), contentWidth - 10);
+        doc.text(optLines, margin + 10, y);
+        y += optLines.length * 7 + 2;
+        
+        if (y > 260) { doc.addPage(); doc.setFont("Roboto"); y = 20; }
         doc.setTextColor(21, 128, 61); // Green
-        doc.text(`Dap an dung: ${q.correctAnswer.replace(/\$/g, '')}`, 15, y);
+        const cleanCorrect = q.correctAnswer.replace(/<[^>]*>?/gm, '').replace(/\$/g, '');
+        doc.text(`Đáp án đúng: ${cleanCorrect}`, margin, y);
         doc.setTextColor(0, 0, 0);
         y += 7;
         
-        if (y > 270) { doc.addPage(); y = 20; }
+        if (y > 260) { doc.addPage(); doc.setFont("Roboto"); y = 20; }
         doc.setTextColor(75, 85, 99); // Gray
-        const explText = `Loi giai chi tiết: ${q.explanation.replace(/\$/g, '')}`;
-        const explLines = doc.splitTextToSize(explText, 180);
-        doc.text(explLines, 15, y);
+        const cleanExpl = q.explanation.replace(/<[^>]*>?/gm, '').replace(/\$/g, '');
+        const explText = `Lời giải chi tiết: ${cleanExpl}`;
+        const explLines = doc.splitTextToSize(explText, contentWidth);
+        doc.text(explLines, margin, y);
         doc.setTextColor(0, 0, 0);
-        y += explLines.length * 7 + 5;
+        y += explLines.length * 7 + 10;
       });
       
       const namePart = downloadInfo.name ? `${downloadInfo.name.replace(/\s+/g, '_')}_` : '';
@@ -1654,7 +1705,7 @@ const App: React.FC = () => {
       doc.save(`${namePart}${classPart}_${countPart}_NganHangCauHoi_${new Date().getTime()}.pdf`);
     } catch (error) {
       console.error("Lỗi xuất PDF:", error);
-      alert("Có lỗi xảy ra khi tạo file PDF.");
+      alert("Có lỗi xảy ra khi tạo file PDF. Vui lòng kiểm tra kết nối mạng để tải font.");
     }
   };
 
@@ -4149,11 +4200,34 @@ const App: React.FC = () => {
                     </div>
  
                     <div>
-                      <label className="text-[8px] font-black text-rose-400 uppercase block mb-2 tracking-widest">Loại câu hỏi AI tạo</label>
+                      <div className="flex justify-between items-center mb-2">
+                        <label className="text-[8px] font-black text-rose-400 uppercase tracking-widest">Loại câu hỏi AI tạo</label>
+                        <div className="flex gap-1">
+                          <button 
+                            onClick={() => setQuestionConfig(prev => ({...prev, language: 'vi'}))}
+                            className={`w-5 h-5 flex items-center justify-center rounded text-[8px] font-bold transition-all border ${
+                              questionConfig.language === 'vi' 
+                                ? 'bg-rose-600 border-rose-400 text-white shadow-lg shadow-rose-600/20' 
+                                : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-slate-500'
+                            }`}
+                            title="Tiếng Việt"
+                          >V</button>
+                          <button 
+                            onClick={() => setQuestionConfig(prev => ({...prev, language: 'en'}))}
+                            className={`w-5 h-5 flex items-center justify-center rounded text-[8px] font-bold transition-all border ${
+                              questionConfig.language === 'en' 
+                                ? 'bg-rose-600 border-rose-400 text-white shadow-lg shadow-rose-600/20' 
+                                : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-slate-500'
+                            }`}
+                            title="English"
+                          >E</button>
+                        </div>
+                      </div>
                       <div className="grid grid-cols-2 gap-1.5">
                         {Object.values(QuestionCategory).map(cat => (
                           <button 
                             key={cat} 
+                            title={categoryTooltips[cat] || cat}
                             onClick={() => {
                               setQuestionConfig(prev => {
                                 const isSelected = prev.questionCategories.includes(cat);
@@ -4172,7 +4246,7 @@ const App: React.FC = () => {
                                 : 'bg-slate-800/50 border-slate-700 text-white hover:border-slate-500 hover:bg-slate-800'
                             }`}
                           >
-                            {cat}
+                            {questionConfig.language === 'vi' ? (categoryTranslations[cat] || cat) : cat}
                           </button>
                         ))}
                       </div>

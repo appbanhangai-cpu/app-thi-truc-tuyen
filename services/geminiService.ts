@@ -283,11 +283,48 @@ export const generateQuestions = async (
     if (!questions || questions.length === 0) {
       throw new Error("AI trả về dữ liệu trống hoặc không đúng định dạng JSON.");
     }
-    // Xáo trộn ngẫu nhiên vị trí các đáp án
+    
+    // Chuẩn hóa câu hỏi: xử lý nhãn A, B, C, D và xáo trộn đáp án
     return questions.map((q: any) => {
       if (q.options && q.options.length > 0) {
-        const shuffled = [...q.options].sort(() => Math.random() - 0.5);
-        return { ...q, options: shuffled };
+        // 1. Xác định nội dung thực sự của đáp án đúng
+        let actualCorrectText = q.correctAnswer || "";
+        const trimmedCorrect = String(actualCorrectText).trim();
+        
+        // Nếu correctAnswer chỉ là một chữ cái (A, B, C, D...)
+        if (trimmedCorrect.length === 1 && /^[A-Z]$/i.test(trimmedCorrect)) {
+          const letter = trimmedCorrect.toUpperCase();
+          // Tìm option bắt đầu bằng chữ cái đó (ví dụ "A." hoặc "A ")
+          const foundOption = q.options.find((opt: string) => {
+            const tOpt = String(opt).trim().toUpperCase();
+            return tOpt.startsWith(letter + ".") || tOpt.startsWith(letter + " ");
+          });
+          
+          if (foundOption) {
+            actualCorrectText = foundOption;
+          } else {
+            // Nếu không tìm thấy theo nhãn, thử dùng chữ cái như một chỉ số (A=0, B=1...)
+            const index = letter.charCodeAt(0) - 65;
+            if (index >= 0 && index < q.options.length) {
+              actualCorrectText = q.options[index];
+            }
+          }
+        }
+
+        // 2. Làm sạch các tùy chọn (loại bỏ tiền tố "A. ", "B. " nếu có)
+        const cleanText = (t: string) => String(t).replace(/^[A-Z][.\s]\s*/i, '').trim();
+        
+        const cleanedOptions = q.options.map(cleanText);
+        const cleanedCorrect = cleanText(actualCorrectText);
+
+        // 3. Xáo trộn ngẫu nhiên
+        const shuffled = [...cleanedOptions].sort(() => Math.random() - 0.5);
+
+        return {
+          ...q,
+          options: shuffled,
+          correctAnswer: cleanedCorrect
+        };
       }
       return q;
     });
@@ -369,7 +406,42 @@ export const extractQuestionsFromPDF = async (mediaFile: {data: string, mimeType
     if (!questions || questions.length === 0) {
       throw new Error("Không tìm thấy câu hỏi nào trong file PDF hoặc lỗi định dạng JSON.");
     }
-    return questions;
+    
+    // Chuẩn hóa câu hỏi: xử lý nhãn A, B, C, D
+    return questions.map((q: any) => {
+      if (q.options && q.options.length > 0) {
+        let actualCorrectText = q.correctAnswer || "";
+        const trimmedCorrect = String(actualCorrectText).trim();
+        
+        if (trimmedCorrect.length === 1 && /^[A-Z]$/i.test(trimmedCorrect)) {
+          const letter = trimmedCorrect.toUpperCase();
+          const foundOption = q.options.find((opt: string) => {
+            const tOpt = String(opt).trim().toUpperCase();
+            return tOpt.startsWith(letter + ".") || tOpt.startsWith(letter + " ");
+          });
+          
+          if (foundOption) {
+            actualCorrectText = foundOption;
+          } else {
+            const index = letter.charCodeAt(0) - 65;
+            if (index >= 0 && index < q.options.length) {
+              actualCorrectText = q.options[index];
+            }
+          }
+        }
+
+        const cleanText = (t: string) => String(t).replace(/^[A-Z][.\s]\s*/i, '').trim();
+        const cleanedOptions = q.options.map(cleanText);
+        const cleanedCorrect = cleanText(actualCorrectText);
+
+        return {
+          ...q,
+          options: cleanedOptions,
+          correctAnswer: cleanedCorrect
+        };
+      }
+      return q;
+    });
   } catch (e: any) {
     console.error("Lỗi parse JSON trích xuất câu hỏi:", e);
     throw new Error(`Lỗi trích xuất câu hỏi từ PDF: ${e.message}. Vui lòng thử lại.`);
