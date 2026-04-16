@@ -207,6 +207,25 @@ const categoryTranslations: Record<string, string> = {
   [QuestionCategory.ERROR_IDENTIFICATION]: "Tìm lỗi sai"
 };
 
+const getGradeColor = (grade: GradeLevel) => {
+  if (grade === GradeLevel.KINDERGARTEN_5) return '#ef4444'; // Red
+  if (['Lớp 1', 'Lớp 2', 'Lớp 3', 'Lớp 4', 'Lớp 5'].includes(grade)) return '#22c55e'; // Green
+  if (['Lớp 6', 'Lớp 7', 'Lớp 8', 'Lớp 9'].includes(grade)) return '#ec4899'; // Pink
+  if (['Lớp 10', 'Lớp 11', 'Lớp 12'].includes(grade)) return '#7e22ce'; // Purple
+  if (grade === GradeLevel.UNIVERSITY) return '#3b82f6'; // Blue
+  if (grade === GradeLevel.MASTER) return '#f59e0b'; // Amber
+  if (grade === GradeLevel.DOCTOR) return '#06b6d4'; // Cyan
+  return '#ffffff';
+};
+
+const getGradeBorderColorClass = (grade: GradeLevel) => {
+  if (grade === GradeLevel.KINDERGARTEN_5) return 'focus:border-red-500';
+  if (['Lớp 1', 'Lớp 2', 'Lớp 3', 'Lớp 4', 'Lớp 5'].includes(grade)) return 'focus:border-green-500';
+  if (['Lớp 6', 'Lớp 7', 'Lớp 8', 'Lớp 9'].includes(grade)) return 'focus:border-pink-500';
+  if (['Lớp 10', 'Lớp 11', 'Lớp 12'].includes(grade)) return 'focus:border-purple-600';
+  return 'focus:border-indigo-500';
+};
+
 const App: React.FC = () => {
   // State cho Cột Bài học
   const [lessonRaw, setLessonRaw] = useState('');
@@ -3856,7 +3875,7 @@ const App: React.FC = () => {
         <p>&copy; 2026 CÔ HUYỀN PRO - Giải pháp ôn tập  dựa trên AI</p>
         <p className="mt-2">Liên hệ tư vấn phần mềm: 0988771339</p>
         <a 
-          href="https://n-t-p-h-c-t-p-vui-nh-n.vercel.app/" 
+          href="https://conlaso1-trung-tam-toan-anh.vercel.app/" 
           target="_blank" 
           rel="noopener noreferrer"
           className="mt-6 block text-emerald-500 hover:text-emerald-400 transition-colors text-base font-black uppercase tracking-tight"
@@ -4162,12 +4181,13 @@ const App: React.FC = () => {
                       <div>
                         <label className="text-[8px] font-black text-indigo-400 uppercase block mb-1.5 tracking-widest">Lớp học</label>
                         <select 
-                          className="w-full bg-slate-900/50 border border-slate-800 rounded-lg px-2 py-2 text-xs text-white outline-none focus:border-indigo-500 appearance-none cursor-pointer shadow-inner" 
+                          className={`w-full bg-slate-900/50 border border-slate-800 rounded-lg px-2 py-2 text-xs text-white outline-none appearance-none cursor-pointer shadow-inner transition-all ${getGradeBorderColorClass(questionConfig.grade)}`} 
                           value={questionConfig.grade} 
                           onChange={e => setQuestionConfig(prev => ({...prev, grade: e.target.value as GradeLevel}))}
+                          style={{ color: getGradeColor(questionConfig.grade) }}
                         >
                           {Object.values(GradeLevel).map(grade => (
-                            <option key={grade} value={grade} className="bg-slate-900">{grade}</option>
+                            <option key={grade} value={grade} className="bg-slate-900" style={{ color: getGradeColor(grade) }}>{grade}</option>
                           ))}
                         </select>
                       </div>
@@ -4492,10 +4512,10 @@ const App: React.FC = () => {
                           onChange={e => setQuestionConfig(prev => ({...prev, mcqRatio: parseInt(e.target.value)}))} 
                           className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-amber-500" 
                         />
-                        <div className="flex justify-between mt-1 text-[6px] text-blue-400 font-black uppercase tracking-tighter">
-                          <span>Tự luận</span>
-                          <span>Cân bằng</span>
-                          <span>Trắc nghiệm</span>
+                        <div className="flex justify-between mt-1 text-[6px] font-black uppercase tracking-tighter">
+                          <span className="text-[#bef264] font-bold">Tự luận</span>
+                          <span className="text-[#bef264] font-bold">Cân bằng</span>
+                          <span className="text-[#bef264] font-bold">Trắc nghiệm</span>
                         </div>
                       </div>
                     </div>
