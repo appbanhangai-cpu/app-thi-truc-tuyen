@@ -142,6 +142,7 @@ export const generateQuestions = async (
     optionsCount: number;
     subject?: string;
     educationLevel?: string;
+    grade?: string;
     languageMode?: string;
     questionCategories?: string[];
     categoryCounts?: Record<string, number>;
@@ -158,10 +159,16 @@ export const generateQuestions = async (
   const contextPrompt = `
   MÔN HỌC: ${config.subject || 'Chưa xác định'}
   CẤP ĐỘ: ${config.educationLevel || 'Trung học phổ thông'}
+  LỚP: ${config.grade || 'Chưa xác định'}
   CHẾ ĐỘ: ${config.languageMode || 'Chế độ kiểm tra chung'}
   PHÂN BỔ CÂU HỎI:
   ${config.questionCategories?.map(cat => `- ${cat}: ${config.categoryCounts?.[cat] || 0} câu`).join('\n') || 'Hỗn hợp'}
   TỔNG CỘNG: ${config.count} câu
+
+  YÊU CẦU QUAN TRỌNG VỀ TRÌNH ĐỘ:
+  - Tạo câu hỏi phù hợp CHÍNH XÁC với trình độ của "${config.grade}" và "${config.educationLevel}".
+  - TUYỆT ĐỐI không tạo câu hỏi vượt cấp hoặc quá khó so với lứa tuổi.
+  - Nội dung câu hỏi phải bám sát vào tài liệu đã cung cấp.
   `;
 
   const isEnglishSubject = config.subject?.toLowerCase().includes('anh') || config.subject?.toLowerCase().includes('english') || config.language === 'en';

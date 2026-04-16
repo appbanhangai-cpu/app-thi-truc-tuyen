@@ -12,11 +12,32 @@ export enum Difficulty {
 }
 
 export enum EducationLevel {
+  KINDERGARTEN = 'Mẫu giáo',
   PRIMARY = 'Tiểu học - C1',
   SECONDARY = 'Trung học cơ sở - C2',
   HIGH_SCHOOL = 'Trung học phổ thông - C3',
   UNIVERSITY = 'Đại học',
+  POST_GRADUATE = 'Sau đại học',
   OTHER = 'Khác'
+}
+
+export enum GradeLevel {
+  KINDERGARTEN_5 = 'Mẫu giáo 5 Tuổi',
+  GRADE_1 = 'Lớp 1',
+  GRADE_2 = 'Lớp 2',
+  GRADE_3 = 'Lớp 3',
+  GRADE_4 = 'Lớp 4',
+  GRADE_5 = 'Lớp 5',
+  GRADE_6 = 'Lớp 6',
+  GRADE_7 = 'Lớp 7',
+  GRADE_8 = 'Lớp 8',
+  GRADE_9 = 'Lớp 9',
+  GRADE_10 = 'Lớp 10',
+  GRADE_11 = 'Lớp 11',
+  GRADE_12 = 'Lớp 12',
+  UNIVERSITY = 'Đại học',
+  MASTER = 'Cao học',
+  DOCTOR = 'Tiến sỹ'
 }
 
 export enum LanguageMode {

@@ -1,6 +1,6 @@
 {
-  "name": "Ứng dụng ôn tập - CÔ HUYỀN PRO - Đưa lên Web",
-  "description": "Ứng dụng ôn tập Hóa học lớp 10 với vòng quay may mắn và câu hỏi cá nhân hóa được tạo bởi AI.",
+  "name": "Nền tảng học tập vui nhộn - CÔ HUYỀN PRO",
+  "description": "Nền tảng thi và ôn tập trực tuyến vui nhộn, cá nhân hóa theo trình độ học sinh bằng AI. (Website: https://n-t-p-h-c-t-p-vui-nh-n.vercel.app/)",
   "requestFramePermissions": [
     "camera"
   ]

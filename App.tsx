@@ -63,7 +63,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import mammoth from 'mammoth';
 import { Document, Packer, Paragraph, TextRun, AlignmentType, HeadingLevel, ImageRun } from 'docx';
-import { Difficulty, Question, QuestionType, Student, LessonContent, GameHistory, ExamResult, EducationLevel, LanguageMode, QuestionCategory } from './types.ts';
+import { Difficulty, Question, QuestionType, Student, LessonContent, GameHistory, ExamResult, EducationLevel, LanguageMode, QuestionCategory, GradeLevel } from './types.ts';
 import { extractAndAnalyzeLesson, generateQuestions, extractStudents, extractQuestionsFromPDF } from './services/geminiService.ts';
 import Wheel from './components/Wheel.tsx';
 import QuestionCard, { LatexRenderer } from './components/QuestionCard.tsx';
@@ -224,6 +224,7 @@ const App: React.FC = () => {
     optionsCount: 4, // Mặc định là 4 theo yêu cầu mới
     subject: 'Anh văn',
     educationLevel: EducationLevel.HIGH_SCHOOL,
+    grade: GradeLevel.GRADE_12,
     languageMode: LanguageMode.GENERAL,
     questionCategories: [QuestionCategory.VOCABULARY, QuestionCategory.GRAMMAR],
     categoryCounts: {
@@ -1356,6 +1357,7 @@ const App: React.FC = () => {
           optionsCount: questionConfig.optionsCount,
           subject: questionConfig.subject,
           educationLevel: questionConfig.educationLevel,
+          grade: questionConfig.grade,
           languageMode: questionConfig.languageMode,
           questionCategories: questionConfig.questionCategories,
           categoryCounts: questionConfig.categoryCounts
@@ -2619,7 +2621,7 @@ const App: React.FC = () => {
             </div>
             <div>
               <h1 className="text-4xl font-bold font-heading neon-text tracking-tight uppercase leading-none">CÔ HUYỀN PRO</h1>
-              <p className="text-indigo-400 font-black uppercase tracking-widest text-[10px] mt-1 text-shadow-sm opacity-80">Ôn tập & Học tập vui nhộn</p>
+              <p className="text-indigo-400 font-black uppercase tracking-widest text-[10px] mt-1 text-shadow-sm opacity-80">Nền tảng học tập vui nhộn</p>
             </div>
           </div>
           
@@ -3854,7 +3856,7 @@ const App: React.FC = () => {
         <p>&copy; 2026 CÔ HUYỀN PRO - Giải pháp ôn tập  dựa trên AI</p>
         <p className="mt-2">Liên hệ tư vấn phần mềm: 0988771339</p>
         <a 
-          href="https://conlaso1-trung-tam-toan-anh.vercel.app/" 
+          href="https://n-t-p-h-c-t-p-vui-nh-n.vercel.app/" 
           target="_blank" 
           rel="noopener noreferrer"
           className="mt-6 block text-emerald-500 hover:text-emerald-400 transition-colors text-base font-black uppercase tracking-tight"
@@ -4113,7 +4115,7 @@ const App: React.FC = () => {
                       />
                     </div>
                     
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                       <div>
                         <label className="text-[8px] font-black text-purple-400 uppercase block mb-1.5 tracking-widest">Số lượng câu</label>
                         <input 
@@ -4153,6 +4155,19 @@ const App: React.FC = () => {
                         >
                           {Object.values(EducationLevel).map(level => (
                             <option key={level} value={level} className="bg-slate-900">{level}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="text-[8px] font-black text-indigo-400 uppercase block mb-1.5 tracking-widest">Lớp học</label>
+                        <select 
+                          className="w-full bg-slate-900/50 border border-slate-800 rounded-lg px-2 py-2 text-xs text-white outline-none focus:border-indigo-500 appearance-none cursor-pointer shadow-inner" 
+                          value={questionConfig.grade} 
+                          onChange={e => setQuestionConfig(prev => ({...prev, grade: e.target.value as GradeLevel}))}
+                        >
+                          {Object.values(GradeLevel).map(grade => (
+                            <option key={grade} value={grade} className="bg-slate-900">{grade}</option>
                           ))}
                         </select>
                       </div>
