@@ -1,7 +1,8 @@
 {
-  "name": "Nền tảng học tập vui nhộn - CÔ HUYỀN PRO",
+  "name": "App Thi online Cô Huyền 16A Lý Thái Tổ",
   "description": "Nền tảng thi và ôn tập trực tuyến vui nhộn, cá nhân hóa theo trình độ học sinh bằng AI. (Website: https://n-t-p-h-c-t-p-vui-nh-n.vercel.app/)",
   "requestFramePermissions": [
     "camera"
-  ]
+  ],
+  "majorCapabilities": []
 }

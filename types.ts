@@ -102,6 +102,8 @@ export interface ExamResult {
   id: string;
   name: string;
   className: string;
+  subject?: string;
+  duration?: number;
   score: number;
   totalQuestions: number;
   correctAnswers: number;

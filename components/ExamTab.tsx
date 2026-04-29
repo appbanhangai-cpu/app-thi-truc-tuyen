@@ -65,7 +65,7 @@ export const ExamTab = ({
 
   return (
     <div className="max-w-7xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-500 pb-20">
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
           <div className="w-10 h-10 rounded-lg overflow-hidden border border-amber-500/30 shadow-lg shadow-amber-500/10">
             <img 
@@ -252,6 +252,16 @@ export const ExamTab = ({
                 </div>
 
                 <div className="space-y-1.5">
+                  <label className="text-[8px] font-black text-slate-500 uppercase tracking-widest ml-1">Môn thi <span className="text-rose-500">*</span></label>
+                  <input 
+                    placeholder="VD: Hóa học, Tiếng Anh..."
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white font-bold outline-none focus:border-amber-500 transition-all"
+                    value={examStudentInfo.subject}
+                    onChange={e => setExamStudentInfo({...examStudentInfo, subject: e.target.value})}
+                  />
+                </div>
+
+                <div className="space-y-1.5">
                   <label className="text-[8px] font-black text-slate-500 uppercase tracking-widest ml-1">Tên học sinh & Lớp</label>
                   <input 
                     placeholder="VD: Bảo Minh + Lớp 10A"
@@ -265,20 +275,26 @@ export const ExamTab = ({
                   <button 
                     onClick={() => {
                       console.log("BẮT ĐẦU button clicked. Bank size:", questionBank.length);
-                      if (isExamActive) {
-                        setActiveTab('dashboard');
-                      } else {
-                        if (questionBank.length === 0) {
-                          alert("Bạn hãy TẢI LÊN NGÂN HÀNG CÂU HỎI File.JSON trước khi bấm BẮT ĐẦU");
-                          return;
-                        }
-                        handleStartExam();
+                      if (questionBank.length === 0) {
+                        alert("Bạn hãy TẢI LÊN NGÂN HÀNG CÂU HỎI File.JSON trước khi bấm BẮT ĐẦU");
+                        return;
                       }
+
+                      if (!examStudentInfo.subject || !examStudentInfo.subject.trim()) {
+                        alert("Vui lòng nhập Môn thi!");
+                        return;
+                      }
+                      
+                      // Luôn gọi handleStartExam để khởi tạo phiên làm bài của giáo viên
+                      // Trừ khi đã đang trong phiên (isExamActive && student được gán - nhưng ExamTab không biết student)
+                      // Thế nên ta cứ gọi handleStartExam, nó sẽ khởi tạo lại session test.
+                      handleStartExam();
+                      setActiveTab('dashboard');
                     }}
-                    className={`w-full ${isExamActive ? 'bg-indigo-600 hover:bg-indigo-500' : 'bg-amber-600 hover:bg-amber-500'} text-white font-black text-[10px] uppercase rounded-xl py-2.5 transition-all shadow-xl shadow-amber-500/20 active:scale-95 flex items-center justify-center gap-2`}
+                    className={`w-full ${isExamActive ? 'bg-indigo-600 hover:bg-indigo-500 shadow-indigo-500/20' : 'bg-amber-600 hover:bg-amber-500 shadow-amber-500/20'} text-white font-black text-[10px] uppercase rounded-xl py-2.5 transition-all shadow-xl active:scale-95 flex items-center justify-center gap-2`}
                   >
                     {isExamActive ? <Eye className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-                    {isExamActive ? 'XEM PHÒNG' : 'BẮT ĐẦU'}
+                    {isExamActive ? 'VÀO PHÒNG' : 'BẮT ĐẦU'}
                   </button>
 
                   {isExamActive && (

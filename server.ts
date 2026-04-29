@@ -177,14 +177,21 @@ async function startServer() {
         displayClass = parts[1].trim();
       }
 
+      // Định dạng thời gian làm bài (phút:giây)
+      const durationSeconds = result.duration || 0;
+      const mins = Math.floor(durationSeconds / 60);
+      const secs = durationSeconds % 60;
+      const durationDisplay = `${mins}:${secs.toString().padStart(2, '0')}`;
+
       const sheetData = {
         sheetName: "BangDiem", 
         name: String(displayName), 
         className: String(displayClass),
-        subject: String(state.lessonParsed?.title || "Ôn tập"), 
+        subject: String(result.subject || state.lessonParsed?.title || "Ôn tập"), 
         correctCount: `${result.correctAnswers || 0}/${result.totalQuestions || 0}`,
         score: Number(result.score || 0), 
         rank: String(rank),
+        duration: durationDisplay, // Thêm trường thời gian làm bài thực tế
         helpCount: Number(result.helpCount || 0),
         date: new Date(ts).toLocaleDateString('vi-VN', vnOptions), 
         time: new Date(ts).toLocaleTimeString('vi-VN', vnOptions)
@@ -262,7 +269,7 @@ async function startServer() {
   });
   apiRouter.get("/config/sheet", (req, res) => res.json({ url: state.googleSheetUrl || "" }));
   apiRouter.post("/start-exam", async (req, res) => {
-    const { name, className } = req.body;
+    const { name, className, subject } = req.body;
     const googleSheetUrl = getGoogleSheetUrl();
     const ts = Date.now();
     const vnOptions: Intl.DateTimeFormatOptions = { timeZone: 'Asia/Ho_Chi_Minh', hour12: false };
@@ -274,9 +281,16 @@ async function startServer() {
       displayClass = parts[1].trim();
     }
     const sheetData = {
-      sheetName: "BangDiem", name: String(displayName), className: String(displayClass),
-      subject: String(state.lessonParsed?.title || "Ôn tập"), correctCount: "Đang thi...", score: "...", rank: "Đang làm bài",
-      date: new Date(ts).toLocaleDateString('vi-VN', vnOptions), time: new Date(ts).toLocaleTimeString('vi-VN', vnOptions)
+      sheetName: "BangDiem", 
+      name: String(displayName), 
+      className: String(displayClass),
+      subject: String(subject || state.lessonParsed?.title || "Ôn tập"), 
+      correctCount: "Đang thi...", 
+      score: "...", 
+      rank: "Đang làm bài",
+      duration: "...",
+      date: new Date(ts).toLocaleDateString('vi-VN', vnOptions), 
+      time: new Date(ts).toLocaleTimeString('vi-VN', vnOptions)
     };
     (async () => {
       try {
@@ -294,7 +308,7 @@ async function startServer() {
     const vnOptions: Intl.DateTimeFormatOptions = { timeZone: 'Asia/Ho_Chi_Minh', hour12: false };
     const testData = {
       sheetName: "BangDiem", name: "KIỂM TRA HỆ THỐNG", className: "TEST", subject: "KIỂM TRA KẾT NỐI",
-      correctCount: "10/10", score: 10, rank: "Xuất sắc",
+      correctCount: "10/10", score: 10, rank: "Xuất sắc", duration: "0:01",
       date: new Date(ts).toLocaleDateString('vi-VN', vnOptions), time: new Date(ts).toLocaleTimeString('vi-VN', vnOptions)
     };
     try {

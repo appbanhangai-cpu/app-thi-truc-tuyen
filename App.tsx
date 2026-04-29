@@ -61,6 +61,7 @@ import {
   Grid3X3
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { GoogleGenAI } from "@google/genai";
 import mammoth from 'mammoth';
 import { Document, Packer, Paragraph, TextRun, AlignmentType, HeadingLevel, ImageRun } from 'docx';
 import { Difficulty, Question, QuestionType, Student, LessonContent, GameHistory, ExamResult, EducationLevel, LanguageMode, QuestionCategory, GradeLevel } from './types.ts';
@@ -70,6 +71,7 @@ import QuestionCard, { LatexRenderer } from './components/QuestionCard.tsx';
 import Flashcard from './components/Flashcard.tsx';
 import { MonitoringTab, CameraMonitor } from './components/Monitoring.tsx';
 import ExamTab from './components/ExamTab.tsx';
+import BankCheckerTab from './components/BankCheckerTab.tsx';
 import * as XLSX from 'xlsx';
 import { safeJsonParse } from './utils.ts';
 
@@ -107,8 +109,6 @@ const API_BASE = getApiBase();
 async function safeFetchJson(url: string, options?: RequestInit, retries = 2) {
   const fetchOptions: RequestInit = {
     ...options,
-    mode: 'cors',
-    credentials: 'omit',
     headers: {
       'Accept': 'application/json',
       'Content-Type': 'application/json',
@@ -142,7 +142,13 @@ async function safeFetchJson(url: string, options?: RequestInit, retries = 2) {
       if (!contentType.includes("application/json")) {
         const preview = text.trim().substring(0, 100).replace(/<[^>]*>?/gm, '');
         console.error(`[Network] Non-JSON response from ${url}:`, { contentType, preview });
-        lastError = new Error(`Dữ liệu không phải JSON (${contentType}). Nội dung: "${preview}..." (Status: ${res.status})`);
+        
+        let customMessage = `Dữ liệu không phải JSON (${contentType})`;
+        if (text.includes('<div id="root">') || text.includes('<title>')) {
+          customMessage = "Lỗi cấu hình máy chủ: API đang trả về trang giao diện (SPA Fallback). Vui lòng kiểm tra lại file vercel.json hoặc api/index.ts";
+        }
+        
+        lastError = new Error(`${customMessage}. Nội dung: "${preview}..." (Status: ${res.status})`);
         continue;
       }
 
@@ -227,6 +233,13 @@ const getGradeBorderColorClass = (grade: GradeLevel) => {
 };
 
 const App: React.FC = () => {
+  // Pass động dựa trên ngày (Yêu cầu mới: 2021 + số chẵn nếu ngày lẻ, và ngược lại)
+  const MASTER_PASS = useMemo(() => {
+    const day = new Date().getDate();
+    const suffix = day + 1;
+    return `2021${suffix}`;
+  }, []);
+
   // State cho Cột Bài học
   const [lessonRaw, setLessonRaw] = useState('');
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
@@ -407,7 +420,7 @@ const App: React.FC = () => {
   };
   const [isExamActive, setIsExamActive] = useState(false);
   const [exitPassword, setExitPassword] = useState('');
-  const [examStudentInfo, setExamStudentInfo] = useState({ name: '', class: '', subject: 'Hóa học', id: '' });
+  const [examStudentInfo, setExamStudentInfo] = useState({ name: '', class: '', subject: '', id: '' });
   const [examTimeLimit, setExamTimeLimit] = useState(15); // phút
   const [examQuestionCount, setExamQuestionCount] = useState(100); // số câu hỏi trong bài thi
   const [allowTranslation, setAllowTranslation] = useState(false);
@@ -435,7 +448,8 @@ const App: React.FC = () => {
   }, [questionBank.length, isStudentMode]);
   
   // State cho Giám sát
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'monitoring' | 'exam' | 'flashcards'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'monitoring' | 'exam' | 'flashcards' | 'bank-checker'>('dashboard');
+  const [bankToEdit, setBankToEdit] = useState<Question[]>([]);
   const [monitoredStudents, setMonitoredStudents] = useState<any[]>([]);
   const socketRef = useRef<WebSocket | null>(null);
 
@@ -712,9 +726,10 @@ const App: React.FC = () => {
     }
   };
 
+  // Theo dõi isExamActive để debug trạng thái
   useEffect(() => {
-    console.log("[Debug] examResults changed:", examResults);
-  }, [examResults]);
+    console.log(`[Debug] isExamActive changed to: ${isExamActive}. activeTab: ${activeTab}`);
+  }, [isExamActive, activeTab]);
 
   const fetchResultsFromServer = async () => {
     try {
@@ -803,7 +818,8 @@ const App: React.FC = () => {
         body: JSON.stringify({
           id: student.id,
           name: student.name,
-          className: className || student.phone // phone field is used for class in student mode
+          className: className || student.phone, // phone field is used for class in student mode
+          subject: examStudentInfo.subject
         })
       });
     } catch (e: any) {
@@ -843,6 +859,70 @@ const App: React.FC = () => {
       setHasSelectedKey(true);
     }
   };
+
+  // --- AI USAGE ASSISTANT ---
+  const [usageMessages, setUsageMessages] = useState<{ role: 'user' | 'assistant', content: string }[]>([
+    { role: 'assistant', content: 'Xin chào! Tôi là trợ lý hướng dẫn sử dụng Cô Huyền Pro. Bạn cần giúp đỡ gì về cách sử dụng ứng dụng này không?' }
+  ]);
+  const [usageInput, setUsageInput] = useState('');
+  const [isSendingUsage, setIsSendingUsage] = useState(false);
+  const usageChatEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (showSetup) {
+      setTimeout(() => {
+        usageChatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
+    }
+  }, [usageMessages, showSetup]);
+
+  const handleSendUsageMessage = async () => {
+    if (!usageInput.trim() || isSendingUsage) return;
+
+    const userMsg = usageInput.trim();
+    setUsageMessages(prev => [...prev, { role: 'user', content: userMsg }]);
+    setUsageInput('');
+    setIsSendingUsage(true);
+
+    try {
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const day = new Date().getDate();
+      const masterPass = `2021${day + 1}`;
+      
+      const systemInstruction = `Bạn là trợ lý hướng dẫn sử dụng chuyên nghiệp cho ứng dụng "CÔ HUYỀN PRO". 
+      Nhiệm vụ của bạn là giải đáp thắc mắc về các tính năng sau:
+      1. Nạp Bài Học: Dán text hoặc tải file (Ảnh, PDF, Word, Excel). Nhấn "TRÍCH XUẤT & PHÂN TÍCH".
+      2. Ngân Hàng Câu Hỏi: Nhấn "TẠO NGÂN HÀNG CÂU HỎI" hoặc tải file .json/.pdf.
+      3. KT CÂU: Kiểm tra, sửa lỗi, xóa câu hỏi trong ngân hàng. Cần thiết trước khi thi.
+      4. Chế Độ Bài Thi: Chọn tab, cấu hình số câu/thời gian, nhấn "BẮT ĐẦU".
+      5. Giám Sát Thi: Xem camera học sinh live và cảnh báo rời tab.
+      6. Flashcards: Học kiến thức trọng tâm.
+      7. Vòng Quay: Chọn học sinh ngẫu nhiên.
+      8. Mật khẩu hệ thống (Exit/Hints/Copy): Hôm nay là ngày ${day}, nên pass là ${masterPass}.
+      9. Xuất bản: Hỗ trợ xuất Word, JSON, Excel và lưu Google Sheets.
+      
+      Trả lời ngắn gọn, thân thiện bằng tiếng Việt. Không trả lời các câu hỏi không liên quan đến ứng dụng này.`;
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: [
+          { role: 'user', parts: [{ text: userMsg }] }
+        ],
+        config: {
+          systemInstruction: systemInstruction
+        }
+      });
+
+      const aiText = response.text || "Xin lỗi, tôi không thể trả lời lúc này.";
+      setUsageMessages(prev => [...prev, { role: 'assistant', content: aiText }]);
+    } catch (error) {
+      console.error("Usage Assistant Error:", error);
+      setUsageMessages(prev => [...prev, { role: 'assistant', content: "Có lỗi xảy ra khi kết nối với trợ lý. Vui lòng thử lại." }]);
+    } finally {
+      setIsSendingUsage(false);
+    }
+  };
+  // --- END AI USAGE ASSISTANT ---
 
   // FIX: Hàm tạo dự án mới (Reset toàn bộ app) đảm bảo hoạt động
   const handleNewProject = (e?: React.MouseEvent) => {
@@ -938,7 +1018,7 @@ const App: React.FC = () => {
 
   const handleCopyPasswordChange = (val: string) => {
     setCopyPassword(val);
-    if (val === '2021') {
+    if (val === MASTER_PASS) {
       handleCopyExamLink();
       setCopyPassword('');
       setShowCopyPasswordInput(false);
@@ -1902,25 +1982,27 @@ const App: React.FC = () => {
   };
 
   const handleStartExam = () => {
-    console.log("handleStartExam called. Bank size:", questionBank.length);
+    console.log("[Debug] handleStartExam triggered. Config:", { examStudentInfo, examQuestionCount, examTimeLimit, bankSize: questionBank.length });
+    
     if (questionBank.length === 0) {
       alert("Bạn hãy TẢI LÊN NGÂN HÀNG CÂU HỎI File.JSON trước khi bấm BẮT ĐẦU");
       return;
     }
 
-    console.log("Starting exam with config:", { examStudentInfo, examQuestionCount, examTimeLimit, bankSize: questionBank.length });
-    
+    // Sử dụng tên từ state, nếu trống thì dùng mặc định thay vì prompt (để tránh bị block trong iframe)
     let studentName = examStudentInfo.name.trim();
     if (!studentName) {
-      const name = prompt("Nhập Tên học sinh và Lớp ( Cho ví dụ: Họ và Tên + Lớp ) Ví dụ thực: Bảo Minh + Lớp 10A");
-      if (name && name.trim()) {
-        studentName = name.trim();
-        setExamStudentInfo({ ...examStudentInfo, name: studentName });
-      } else {
-        return;
-      }
+      console.log("[Debug] Student name is empty, using default 'GIÁO VIÊN TEST'");
+      studentName = "GIÁO VIÊN TEST";
+      // Cập nhật lại state để UI đồng bộ
+      setExamStudentInfo(prev => ({ ...prev, name: studentName }));
     }
     
+    if (!examStudentInfo.subject || !examStudentInfo.subject.trim()) {
+      alert("Vui lòng nhập Môn thi!");
+      return;
+    }
+
     if (examQuestionCount <= 0) {
       alert("Vui lòng nhập số câu hỏi cho bài thi!");
       return;
@@ -1931,33 +2013,67 @@ const App: React.FC = () => {
     }
 
     const mockStudent: Student = {
-      id: `exam-${Date.now()}`,
+      id: `teacher-test-${Date.now()}`,
       name: studentName,
       score: 0,
-      hasPlayed: false
+      hasPlayed: false,
+      phone: "0000000000"
     };
 
-    setIsExamActive(true);
-    setCurrentStudent(mockStudent);
+    console.log("[Debug] Initializing exam session for:", studentName);
     
-    // Ghi nhận bắt đầu thi lên Sheet
-    syncStartToServer(mockStudent);
+    // Ghi nhận bắt đầu thi lên Server (background)
+    syncStartToServer(mockStudent).catch(e => console.error("[Debug] syncStartToServer error:", e));
     
     // Shuffle and pick requested number of questions
-    const shuffledBank = [...questionBank].sort(() => 0.5 - Math.random());
-    const selectedQuestions = shuffledBank.slice(0, Math.min(examQuestionCount, questionBank.length));
+    const shuffleArray = <T,>(array: T[]): T[] => {
+      const result = [...array];
+      for (let i = result.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [result[i], result[j]] = [result[j], result[i]];
+      }
+      return result;
+    };
+
+    const shuffledBank = shuffleArray(questionBank);
+    const selectedQuestions = shuffledBank
+      .slice(0, Math.min(examQuestionCount, questionBank.length))
+      .map((q: Question) => {
+        // Thông minh: Đảo thứ tự đáp án nhưng giữ lại các câu kiểu "Tất cả các đáp án trên" ở cuối
+        const options = q.options;
+        const fixedKeywords = ["tất cả", "cả ", "none of", "all of", "đều đúng", "đều sai"];
+        const fixedOptions = options.filter(opt => 
+          fixedKeywords.some(key => opt.toLowerCase().includes(key))
+        );
+        const normalOptions = options.filter(opt => 
+          !fixedKeywords.some(key => opt.toLowerCase().includes(key))
+        );
+        
+        return {
+          ...q,
+          options: [...shuffleArray(normalOptions), ...fixedOptions]
+        };
+      });
     
+    console.log(`[Debug] Selected ${selectedQuestions.length} questions with smart shuffled options. Setting isExamActive = true`);
+
+    // Set states
+    setIsExamActive(true);
+    setCurrentStudent(mockStudent);
     setCurrentQuestionSet(selectedQuestions);
     setQuestionsUsedHelp([]);
     setCurrentQuestionIndex(0);
     setTimeLeft(examTimeLimit * 60);
     setTurnFinished(false);
     setShowSetup(false);
-    setCurrentTurnAnswers([]); // Reset chi tiết câu trả lời
+    setCurrentTurnAnswers([]); 
     setSyncStatus('idle');
     setSyncError(null);
     setLastSavedResultId(null);
+    
+    // Switch tab
     setActiveTab('dashboard');
+    console.log("[Debug] Exam started successfully. Switched to dashboard.");
   };
 
   const handleRetakeIncorrect = () => {
@@ -2052,10 +2168,17 @@ const App: React.FC = () => {
       currentSessionId 
     });
     const score = Number(((correctCount / totalCount) * 10).toFixed(1));
+    
+    // Tính toán thời gian thực tế đã làm bài (giây)
+    const initialSeconds = examTimeLimit * 60;
+    const durationSeconds = initialSeconds - timeLeft;
+
     const result: ExamResult = {
       id: 'res-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9),
       name: student.name,
       className: className,
+      subject: examStudentInfo.subject,
+      duration: durationSeconds > 0 ? durationSeconds : 0,
       score: score,
       totalQuestions: totalCount,
       correctAnswers: correctCount,
@@ -2368,27 +2491,36 @@ const App: React.FC = () => {
 
             {!turnFinished ? (
               <div className="flex flex-col gap-6">
-                <div className="flex items-center gap-6">
-                  <div className="flex-1 h-1.5 bg-slate-800/50 rounded-full overflow-hidden border border-slate-700/30">
-                    <div 
-                      className="h-full bg-gradient-to-r from-indigo-600 to-violet-500 shadow-[0_0_15px_rgba(79,70,229,0.5)] transition-all duration-700 ease-out" 
-                      style={{ width: `${((currentQuestionIndex + 1) / currentQuestionSet.length) * 100}%` }}
-                    ></div>
+                {currentQuestionSet.length > 0 && currentQuestionIndex < currentQuestionSet.length ? (
+                  <>
+                    <div className="flex items-center gap-6">
+                      <div className="flex-1 h-1.5 bg-slate-800/50 rounded-full overflow-hidden border border-slate-700/30">
+                        <div 
+                          className="h-full bg-gradient-to-r from-indigo-600 to-violet-500 shadow-[0_0_15px_rgba(79,70,229,0.5)] transition-all duration-700 ease-out" 
+                          style={{ width: `${((currentQuestionIndex + 1) / currentQuestionSet.length) * 100}%` }}
+                        ></div>
+                      </div>
+                      <span className="text-[11px] font-black text-slate-500 uppercase tracking-widest whitespace-nowrap">CÂU {currentQuestionIndex + 1} / {currentQuestionSet.length}</span>
+                    </div>
+                    
+                    <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                      <QuestionCard 
+                        key={`exam-${currentQuestionIndex}`}
+                        question={currentQuestionSet[currentQuestionIndex]} 
+                        studentName={currentStudent?.name || ""}
+                        onAnswered={handleAnswered}
+                        images={lessonParsed?.mediaFiles}
+                        allowTranslation={allowTranslation}
+                        showHints={showHints}
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex flex-col items-center justify-center py-20 bg-slate-900/50 rounded-2xl border border-dashed border-slate-700">
+                    <Loader2 className="w-10 h-10 text-slate-600 animate-spin mb-4" />
+                    <p className="text-slate-500 font-bold uppercase tracking-widest text-[10px]">Đang tải câu hỏi hoặc chưa có ngân hàng...</p>
                   </div>
-                  <span className="text-[11px] font-black text-slate-500 uppercase tracking-widest whitespace-nowrap">CÂU {currentQuestionIndex + 1} / {currentQuestionSet.length}</span>
-                </div>
-                
-                <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-                  <QuestionCard 
-                    key={`exam-${currentQuestionIndex}`}
-                    question={currentQuestionSet[currentQuestionIndex]} 
-                    studentName={currentStudent?.name || ""}
-                    onAnswered={handleAnswered}
-                    images={lessonParsed?.mediaFiles}
-                    allowTranslation={allowTranslation}
-                    showHints={showHints}
-                  />
-                </div>
+                )}
               </div>
             ) : (
               <div className="glass rounded-[1.5rem] p-6 sm:p-10 border-indigo-500/30 flex flex-col items-center justify-center text-center animate-in zoom-in-95 duration-500">
@@ -2429,7 +2561,6 @@ const App: React.FC = () => {
                       if (window.opener) {
                         window.close();
                       } else {
-                        // Nếu không thể close tab (do trình duyệt chặn), reset state để về màn hình login
                         setCurrentStudent(null);
                         setIsExamActive(false);
                         setTurnFinished(false);
@@ -2454,181 +2585,235 @@ const App: React.FC = () => {
     <div className="min-h-screen bg-slate-950 text-slate-200 overflow-x-hidden p-4 md:p-8">
       {/* Setup Modal */}
       {showSetup && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in">
-          <div className="glass w-full max-w-2xl rounded-3xl p-8 border-indigo-500/30 shadow-2xl overflow-hidden relative">
-            <button onClick={() => setShowSetup(false)} className="absolute top-6 right-6 text-slate-500 hover:text-white transition-colors">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/90 backdrop-blur-xl animate-in fade-in">
+          <div className="glass w-full h-full p-8 md:p-12 border-slate-800 shadow-2xl overflow-hidden relative flex flex-col rounded-none">
+            <button onClick={() => setShowSetup(false)} className="absolute top-8 right-8 text-slate-500 hover:text-white transition-colors z-10 w-10 h-10 flex items-center justify-center bg-slate-900/50 rounded-full border border-slate-800">
               <X className="w-6 h-6" />
             </button>
-            <div className="flex items-center gap-3 mb-6">
-              <Settings2 className="w-8 h-8 text-indigo-400" />
-              <h2 className="text-3xl font-black font-heading tracking-tighter uppercase">CẤU HÌNH & HƯỚNG DẪN</h2>
+            <div className="flex items-center gap-4 mb-8">
+              <div className="p-3 bg-indigo-500/20 rounded-2xl border border-indigo-500/30 shadow-lg shadow-indigo-500/10">
+                <Settings2 className="w-10 h-10 text-indigo-400" />
+              </div>
+              <div>
+                <h2 className="text-4xl font-black font-heading tracking-tighter uppercase leading-tight">CẤU HÌNH & HƯỚNG DẪN</h2>
+                <p className="text-slate-500 font-bold uppercase tracking-[0.2em] text-[10px]">Quản trị viên & Hỗ trợ kỹ thuật</p>
+              </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 overflow-y-auto max-h-[70vh] pr-2 custom-scrollbar">
-              <div className="space-y-6">
-                <div>
-                  <h3 className="text-indigo-400 font-black text-sm uppercase mb-3 flex items-center gap-2">
-                    <HelpCircle className="w-4 h-4" /> Cách chơi
-                  </h3>
-                  <ul className="space-y-3 text-xs text-slate-400 leading-relaxed list-decimal list-inside">
-                    <li>Nạp bài học bằng cách dán văn bản hoặc tải file Ảnh/PDF/Word.</li>
-                    <li>Nhấn "Trích xuất" để AI phân tích kiến thức trọng tâm.</li>
-                    <li>Thiết lập mức độ và số lượng câu hỏi rồi nhấn "Tạo ngân hàng".</li>
-                    <li>Nhập danh sách học sinh (hoặc tải file danh sách).</li>
-                    <li>Nhấn "Quay ngay" để chọn học sinh trả lời thử thách.</li>
-                  </ul>
-                </div>
-
-                <div>
-                  <h3 className="text-indigo-400 font-black text-sm uppercase mb-3 flex items-center gap-2">
-                    <RotateCw className="w-4 h-4" /> Vòng quay nâng cao
-                  </h3>
-                  <label className="block text-[10px] text-slate-500 font-bold uppercase mb-2">Số câu hỏi mỗi lượt quay</label>
-                  <div className="flex items-center gap-4">
-                    <input 
-                      type="number" min="1" max="5"
-                      className="bg-slate-900 border border-slate-700 rounded-xl px-4 py-2 w-20 text-white font-bold outline-none focus:ring-2 focus:ring-indigo-500"
-                      value={questionsPerTurn === 0 ? '' : questionsPerTurn}
-                      onChange={e => setQuestionsPerTurn(e.target.value === '' ? 0 : parseInt(e.target.value))}
-                    />
-                    <span className="text-[10px] text-slate-500 italic">Mặc định: 1 câu/lượt</span>
+            <div className="flex-1 overflow-y-auto pr-4 -mr-4 custom-scrollbar">
+              <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-8 pb-4">
+                {/* Column 1: Instructions & Misc */}
+                <div className="space-y-6">
+                  <div className="p-6 bg-slate-900/40 border border-slate-800/50 rounded-[2rem] shadow-sm">
+                    <h3 className="text-indigo-400 font-black text-sm uppercase mb-3 flex items-center gap-2">
+                      <HelpCircle className="w-4 h-4" /> Hướng dẫn nhanh
+                    </h3>
+                    <div className="space-y-4">
+                      <ul className="space-y-2 text-[11px] text-slate-400 leading-relaxed list-none">
+                        <li className="flex gap-2"><span className="text-indigo-500 font-black">01.</span> Nạp bài học hoặc tải file văn bản/hình ảnh.</li>
+                        <li className="flex gap-2"><span className="text-indigo-500 font-black">02.</span> Trích xuất kiến thức & Tạo ngân hàng câu hỏi.</li>
+                        <li className="flex gap-2"><span className="text-indigo-500 font-black">03.</span> Kiểm tra câu hỏi bằng nút "KT CÂU".</li>
+                        <li className="flex gap-2"><span className="text-indigo-500 font-black">04.</span> Chia sẻ link cho học sinh và bắt đầu thi.</li>
+                      </ul>
+                      
+                      <button 
+                        onClick={() => usageChatEndRef.current?.scrollIntoView({ behavior: 'smooth' })}
+                        className="flex items-center gap-2 px-4 py-2 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 text-[10px] font-black uppercase border border-indigo-500/30 rounded-xl transition-all w-full justify-center"
+                      >
+                        <Brain className="w-3.5 h-3.5" /> Chat hỗ trợ nhanh
+                      </button>
+                    </div>
                   </div>
-                </div>
-              </div>
 
-              <div className="space-y-6">
-                <div className="p-4 bg-indigo-500/10 border border-indigo-500/20 rounded-2xl">
-                  <h3 className="text-indigo-400 font-black text-sm uppercase mb-3 flex items-center gap-2">
-                    <Activity className="w-4 h-4" /> Kiểm tra hệ thống
-                  </h3>
-                  <div className="space-y-3">
-                    <button 
-                      disabled={testStatus.type === 'loading'}
-                      onClick={async () => {
-                        setTestStatus({ type: 'loading', message: 'Đang kiểm tra kết nối máy chủ...' });
-                        try {
-                          const res = await safeFetchJson(`${API_BASE}/api/test-post`, {
-                            method: 'POST',
-                            body: JSON.stringify({ test: true, time: new Date().toISOString() })
-                          });
-                          setTestStatus({ 
-                            type: res.success ? 'success' : 'error', 
-                            message: `Kết nối POST: ${res.success ? 'THÀNH CÔNG' : 'THẤT BẠI'}. ${res.message || ''}` 
-                          });
-                        } catch (e: any) {
-                          setTestStatus({ type: 'error', message: `Lỗi kết nối: ${e.message}` });
-                        }
-                      }}
-                      className="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-white text-[11px] font-black uppercase rounded-xl transition-all border border-slate-700 flex items-center justify-center gap-2 disabled:opacity-50"
-                    >
-                      <Zap className="w-3.5 h-3.5" />
-                      KIỂM TRA KẾT NỐI MÁY CHỦ
-                    </button>
-
-                    <button 
-                      disabled={testStatus.type === 'loading'}
-                      onClick={async () => {
-                        setTestStatus({ type: 'loading', message: 'Đang kiểm tra Google Sheet...' });
-                        try {
-                          const res = await safeFetchJson(`${API_BASE}/api/test-sheet`, { method: 'POST' });
-                          setTestStatus({ 
-                            type: res.success ? 'success' : 'error', 
-                            message: `Google Sheet: ${res.success ? 'THÀNH CÔNG' : 'THẤT BẠI'}. Status: ${res.status}` 
-                          });
-                        } catch (e: any) {
-                          setTestStatus({ type: 'error', message: `Lỗi: ${e.message}` });
-                        }
-                      }}
-                      className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-black uppercase rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 disabled:opacity-50"
-                    >
-                      <Table className="w-3.5 h-3.5" />
-                      KIỂM TRA GOOGLE SHEET
-                    </button>
-
-                    {testStatus.type !== 'idle' && (
-                      <div className={`p-3 rounded-xl text-[10px] font-bold border ${
-                        testStatus.type === 'loading' ? 'bg-indigo-500/10 border-indigo-500/30 text-indigo-400' :
-                        testStatus.type === 'success' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' :
-                        'bg-rose-500/10 border-rose-500/30 text-rose-400'
-                      }`}>
-                        {testStatus.message}
-                      </div>
-                    )}
+                  <div className="p-6 bg-slate-900/40 border border-slate-800/50 rounded-[2rem] shadow-sm">
+                    <h3 className="text-indigo-400 font-black text-sm uppercase mb-3 flex items-center gap-2">
+                      <RotateCw className="w-4 h-4" /> Vòng quay nâng cao
+                    </h3>
+                    <label className="block text-[10px] text-slate-500 font-bold uppercase mb-2">Số câu hỏi mỗi lượt quay</label>
+                    <div className="flex items-center gap-4">
+                      <input 
+                        type="number" min="1" max="5"
+                        className="bg-slate-950 border border-slate-800 rounded-xl px-4 py-2 w-20 text-white font-bold outline-none focus:ring-1 focus:ring-indigo-500"
+                        value={questionsPerTurn === 0 ? '' : questionsPerTurn}
+                        onChange={e => setQuestionsPerTurn(e.target.value === '' ? 0 : parseInt(e.target.value))}
+                      />
+                      <span className="text-[10px] text-slate-500 italic leading-tight">Mặc định: 1 câu</span>
+                    </div>
                   </div>
                 </div>
 
-                <div className="p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl">
-                  <h3 className="text-emerald-400 font-black text-sm uppercase mb-3 flex items-center gap-2">
-                    <Key className="w-4 h-4" /> API Key cá nhân
-                  </h3>
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Trạng thái</span>
-                      {hasSelectedKey ? (
-                        <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-400 bg-emerald-400/10 px-2 py-0.5 rounded-full border border-emerald-400/20">
-                          <CheckCircle className="w-3 h-3" /> ĐÃ KẾT NỐI
-                        </span>
-                      ) : (
-                        <span className="flex items-center gap-1 text-[10px] font-bold text-rose-400 bg-rose-400/10 px-2 py-0.5 rounded-full border border-rose-400/20">
-                          <AlertCircle className="w-3 h-3" /> CHƯA CÓ KEY
-                        </span>
+                {/* Column 2: System & API */}
+                <div className="space-y-6">
+                  <div className="p-6 bg-slate-900/40 border border-slate-800/50 rounded-[2rem] shadow-sm">
+                    <h3 className="text-indigo-400 font-black text-sm uppercase mb-3 flex items-center gap-2">
+                      <Activity className="w-4 h-4" /> Kiểm tra hệ thống
+                    </h3>
+                    <div className="space-y-3">
+                      <button 
+                        disabled={testStatus.type === 'loading'}
+                        onClick={async () => {
+                          setTestStatus({ type: 'loading', message: 'Đang kiểm tra kết nối máy chủ...' });
+                          try {
+                            const res = await safeFetchJson(`${API_BASE}/api/test-post`, {
+                              method: 'POST',
+                              body: JSON.stringify({ test: true, time: new Date().toISOString() })
+                            });
+                            setTestStatus({ 
+                              type: res.success ? 'success' : 'error', 
+                              message: `Kết nối POST: ${res.success ? 'THÀNH CÔNG' : 'THẤT BẠI'}. ${res.message || ''}` 
+                            });
+                          } catch (e: any) {
+                            setTestStatus({ type: 'error', message: `Lỗi kết nối: ${e.message}` });
+                          }
+                        }}
+                        className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-white text-[11px] font-black uppercase rounded-xl transition-all border border-slate-700 flex items-center justify-center gap-2 disabled:opacity-50"
+                      >
+                        <Zap className="w-3.5 h-3.5" />
+                        TEST SERVER
+                      </button>
+
+                      <button 
+                        disabled={testStatus.type === 'loading'}
+                        onClick={async () => {
+                          setTestStatus({ type: 'loading', message: 'Đang kiểm tra Google Sheet...' });
+                          try {
+                            const res = await safeFetchJson(`${API_BASE}/api/test-sheet`, { method: 'POST' });
+                            setTestStatus({ 
+                              type: res.success ? 'success' : 'error', 
+                              message: `Google Sheet: ${res.success ? 'THÀNH CÔNG' : 'THẤT BẠI'}. Status: ${res.status}` 
+                            });
+                          } catch (e: any) {
+                            setTestStatus({ type: 'error', message: `Lỗi: ${e.message}` });
+                          }
+                        }}
+                        className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-black uppercase rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 disabled:opacity-50"
+                      >
+                        <Table className="w-3.5 h-3.5" />
+                        TEST GOOGLE SHEET
+                      </button>
+
+                      {testStatus.type !== 'idle' && (
+                        <div className={`p-4 rounded-xl text-[10px] font-bold border ${
+                          testStatus.type === 'loading' ? 'bg-indigo-500/10 border-indigo-500/30 text-indigo-400' :
+                          testStatus.type === 'success' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' :
+                          'bg-rose-500/10 border-rose-500/30 text-rose-400'
+                        }`}>
+                          {testStatus.message}
+                        </div>
                       )}
                     </div>
-                    
-                    <button 
-                      onClick={handleSelectApiKey}
-                      className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-black uppercase rounded-xl transition-all shadow-lg flex items-center justify-center gap-2"
-                    >
-                      <Upload className="w-3.5 h-3.5" />
-                      CHỌN API KEY CÁ NHÂN
-                    </button>
+                  </div>
 
-                    <a 
-                      href="https://ai.google.dev/gemini-api/docs/billing" 
-                      target="_blank" 
-                      rel="noopener noreferrer"
-                      className="flex items-center justify-center gap-1.5 text-[9px] text-slate-500 hover:text-indigo-400 transition-colors uppercase font-bold tracking-tighter"
-                    >
-                      Hướng dẫn thiết lập thanh toán <ExternalLink className="w-2.5 h-2.5" />
-                    </a>
+                  <div className="p-6 bg-slate-900/40 border border-slate-800/50 rounded-[2rem] shadow-sm">
+                    <h3 className="text-emerald-400 font-black text-sm uppercase mb-3 flex items-center gap-2">
+                      <Key className="w-4 h-4" /> API Key cá nhân
+                    </h3>
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Trạng thái</span>
+                        {hasSelectedKey ? (
+                          <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-400 bg-emerald-400/10 px-2 py-0.5 rounded-full border border-emerald-400/20">
+                            <CheckCircle className="w-3 h-3" /> ĐÃ KẾT NỐI
+                          </span>
+                        ) : (
+                          <span className="flex items-center gap-1 text-[10px] font-bold text-rose-400 bg-rose-400/10 px-2 py-0.5 rounded-full border border-rose-400/20">
+                            <AlertCircle className="w-3 h-3" /> CHƯA CÓ KEY
+                          </span>
+                        )}
+                      </div>
+                      <button 
+                        onClick={handleSelectApiKey}
+                        className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-black uppercase rounded-xl transition-all shadow-lg flex items-center justify-center gap-2"
+                      >
+                        <Upload className="w-3.5 h-3.5" />
+                        CHỌN API KEY
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="p-6 bg-indigo-500/10 border border-indigo-500/20 rounded-[2rem]">
+                    <h3 className="text-indigo-400 font-black text-sm uppercase mb-3 flex items-center gap-2">
+                      <LinkIcon className="w-4 h-4" /> Google Sheet Sync
+                    </h3>
+                    <input 
+                      type="text"
+                      placeholder="Dán link Apps Script (.exec)..."
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-[10px] text-white font-mono outline-none focus:ring-1 focus:ring-indigo-500 transition-all mb-2"
+                      value={googleSheetUrl}
+                      onChange={e => setGoogleSheetUrl(e.target.value)}
+                    />
+                    <p className="text-[8px] text-slate-500 leading-tight italic">
+                      * Link /exec từ Apps Script.
+                    </p>
                   </div>
                 </div>
 
-                <div className="p-4 bg-indigo-500/10 border border-indigo-500/20 rounded-2xl">
-                  <h3 className="text-indigo-400 font-black text-sm uppercase mb-3 flex items-center gap-2">
-                    <LinkIcon className="w-4 h-4" /> Google Sheet Sync
-                  </h3>
-                  <div className="space-y-3">
-                    <div>
-                      <label className="block text-[10px] text-slate-500 font-bold uppercase mb-1.5 ml-1">Web App URL (Apps Script)</label>
+                {/* Column 3: AI Usage Assistant */}
+                <div className="space-y-6 lg:col-span-2 xl:col-span-1">
+                  <div className="p-6 bg-slate-900/40 border border-slate-800/50 rounded-[2rem] shadow-sm flex flex-col h-full min-h-[480px]">
+                    <div className="flex items-center gap-2 mb-4">
+                      <Brain className="w-6 h-6 text-indigo-400" />
+                      <h3 className="text-sm font-black text-white uppercase tracking-widest">Trợ lý hướng dẫn (AI)</h3>
+                    </div>
+                    
+                    <div className="flex-1 overflow-y-auto pr-2 space-y-4 custom-scrollbar mb-4 bg-slate-950/50 rounded-2xl p-4 border border-slate-800 shadow-inner">
+                      {usageMessages.map((msg, idx) => (
+                        <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                          <div className={`max-w-[85%] px-4 py-3 rounded-2xl text-[11px] font-medium leading-relaxed ${
+                            msg.role === 'user' 
+                              ? 'bg-indigo-600 text-white rounded-tr-none shadow-lg' 
+                              : 'bg-slate-800 text-slate-300 rounded-tl-none border border-slate-700'
+                          }`}>
+                            {msg.content}
+                          </div>
+                        </div>
+                      ))}
+                      {isSendingUsage && (
+                        <div className="flex justify-start">
+                          <div className="bg-slate-800 text-slate-500 px-4 py-2 rounded-2xl rounded-tl-none border border-slate-700 animate-pulse text-[10px] font-bold">
+                            Trợ lý đang trả lời...
+                          </div>
+                        </div>
+                      )}
+                      <div ref={usageChatEndRef} />
+                    </div>
+                    
+                    <div className="flex gap-2">
                       <input 
                         type="text"
-                        placeholder="Dán link Apps Script (.exec)..."
-                        className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-[10px] text-white font-mono outline-none focus:ring-1 focus:ring-indigo-500 transition-all"
-                        value={googleSheetUrl}
-                        onChange={e => setGoogleSheetUrl(e.target.value)}
+                        placeholder="Hỏi về cách dùng app..."
+                        className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-xs text-white outline-none focus:ring-1 focus:ring-indigo-500 transition-all font-medium"
+                        value={usageInput}
+                        onChange={e => setUsageInput(e.target.value)}
+                        onKeyDown={e => e.key === 'Enter' && handleSendUsageMessage()}
                       />
-                      <p className="mt-2 text-[8px] text-slate-500 leading-relaxed italic">
-                        * Lưu ý: Phải dùng link kết thúc bằng /exec từ Google Apps Script.
-                      </p>
+                      <button 
+                        onClick={handleSendUsageMessage}
+                        disabled={isSendingUsage || !usageInput.trim()}
+                        className="p-3 bg-indigo-600 hover:bg-indigo-500 rounded-xl text-white disabled:opacity-50 transition-all active:scale-95 shadow-lg shadow-indigo-600/20"
+                      >
+                        <ArrowRight className="w-5 h-5" />
+                      </button>
                     </div>
                   </div>
                 </div>
               </div>
             </div>
             
-            <button 
-              onClick={handleSaveConfig}
-              className="w-full mt-8 py-4 bg-indigo-600 hover:bg-indigo-500 text-white font-black rounded-2xl transition-all shadow-xl shadow-indigo-500/20"
-            >
-              LƯU CẤU HÌNH
-            </button>
+            <div className="mt-8 flex justify-center pt-6 border-t border-slate-800/50">
+              <button 
+                onClick={handleSaveConfig}
+                className="px-8 py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-black rounded-xl transition-all shadow-xl shadow-indigo-500/20 uppercase tracking-widest text-[10px] active:scale-[0.98]"
+              >
+                LƯU CẤU HÌNH & ĐÓNG
+              </button>
+            </div>
           </div>
         </div>
       )}
 
       {!isExamActive && (
-        <header className="max-w-7xl mx-auto mb-8 flex flex-col md:flex-row items-center justify-between gap-6">
+        <header className="max-w-7xl mx-auto mb-2 flex flex-col md:flex-row items-center justify-between gap-6">
           <div className="flex items-center gap-4">
             <div className="w-16 h-16 rounded-2xl overflow-hidden shadow-lg neon-glow border-2 border-indigo-500/30">
               <img 
@@ -2676,8 +2861,8 @@ const App: React.FC = () => {
       )}
 
       {/* Tab Navigation */}
-      {!isExamActive && (
-        <div className="max-w-7xl mx-auto mb-10 relative group">
+      {(!isExamActive || !isStudentMode) && (
+        <div className="max-w-7xl mx-auto mb-4 relative group">
           <div 
             ref={navScrollRef}
             className="flex gap-4 animate-in fade-in slide-in-from-left-4 duration-700 overflow-x-auto pb-4 px-4 lg:px-0 flex-nowrap custom-scrollbar"
@@ -2967,8 +3152,8 @@ const App: React.FC = () => {
                   </button>
 
                   {/* NÚT TẢI XUỐNG FILE WORD & PDF & JSON - YÊU CẦU MỚI */}
-                  {questionBank.length > 0 && (
-                    <div className="grid grid-cols-3 gap-2 animate-in slide-in-from-top-2">
+                  <div className="grid grid-cols-3 gap-2 animate-in slide-in-from-top-2">
+                    {questionBank.length > 0 ? (
                       <button
                         onClick={() => initiateDownload('word')}
                         className="py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-black transition-all flex items-center justify-center gap-2 text-[10px] shadow-lg active:scale-95 uppercase"
@@ -2977,14 +3162,27 @@ const App: React.FC = () => {
                         <Download className="w-4 h-4" />
                         WORD
                       </button>
-                      <button
-                        onClick={() => initiateDownload('pdf')}
-                        className="py-3 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl font-black transition-all flex items-center justify-center gap-2 text-[10px] shadow-lg active:scale-95 uppercase"
-                        title="Tải file PDF (.pdf)"
-                      >
-                        <Download className="w-4 h-4" />
-                        PDF
-                      </button>
+                    ) : (
+                      <div className="py-3 bg-slate-800/50 text-slate-600 rounded-xl font-black flex items-center justify-center gap-2 text-[10px] border border-slate-700/50 cursor-not-allowed uppercase">
+                        <Download className="w-4 h-4 opacity-30" />
+                        WORD
+                      </div>
+                    )}
+                    
+                    <button
+                      onClick={() => setActiveTab('bank-checker')}
+                      className="py-3 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl font-black transition-all flex items-center justify-center gap-2 text-[10px] shadow-lg active:scale-95 uppercase relative group"
+                      title="" // Clear default title to use custom tooltip
+                    >
+                      <AlertCircle className="w-4 h-4" />
+                      KT CÂU
+                      {/* Custom Tooltip */}
+                      <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-slate-900 text-white text-[10px] px-2 py-1 rounded border border-slate-700 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 shadow-xl">
+                        Kiểm tra lỗi sai của NH câu hỏi
+                      </div>
+                    </button>
+
+                    {questionBank.length > 0 ? (
                       <button
                         onClick={() => initiateDownload('json')}
                         className="py-3 bg-emerald-800 hover:bg-emerald-700 text-white rounded-xl font-black transition-all flex items-center justify-center gap-2 text-[10px] shadow-lg active:scale-95 uppercase"
@@ -2993,8 +3191,13 @@ const App: React.FC = () => {
                         <Download className="w-4 h-4" />
                         JSON
                       </button>
-                    </div>
-                  )}
+                    ) : (
+                      <div className="py-3 bg-slate-800/50 text-slate-600 rounded-xl font-black flex items-center justify-center gap-2 text-[10px] border border-slate-700/50 cursor-not-allowed uppercase">
+                        <Download className="w-4 h-4 opacity-30" />
+                        JSON
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {/* Ngân hàng câu hỏi Preview - SỬ DỤNG LatexRenderer */}
@@ -3125,7 +3328,7 @@ const App: React.FC = () => {
                         </div>
                       </div>
                     </div>
-                    <p className="text-[9px] sm:text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-1">Thí sinh: <span className="text-indigo-400">{currentStudent?.name}</span></p>
+                    <p className="text-[9px] sm:text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-1">Thí sinh: <span className="text-indigo-400">{currentStudent?.name || "Giáo viên"}</span></p>
                     <div className="flex flex-col gap-1 mt-1.5">
                       <p className="text-[8px] sm:text-[9px] text-emerald-500 font-black uppercase tracking-widest leading-none">● Đang giám sát camera trực tiếp</p>
                       <p className="text-[8px] sm:text-[9px] text-rose-500 font-black uppercase tracking-widest leading-none">● Cảnh báo: Không được rời khỏi màn hình</p>
@@ -3143,7 +3346,7 @@ const App: React.FC = () => {
                       onChange={(e) => {
                         const val = e.target.value;
                         setExitPassword(val);
-                        if (val === '2021') {
+                        if (val === MASTER_PASS) {
                           // Tự động lưu kết quả nếu đang thi dở
                           if (currentStudent && currentTurnAnswers.length > 0 && !turnFinished) {
                             const correctCount = currentTurnAnswers.filter(a => a.isCorrect).length;
@@ -3169,7 +3372,7 @@ const App: React.FC = () => {
                       <span className="hidden sm:block text-[8px] font-black text-rose-500 uppercase tracking-widest">Thời gian:</span>
                       <div className={`flex items-center gap-1 font-black text-sm sm:text-lg ${timeLeft < 60 ? 'text-rose-500 animate-pulse' : 'text-rose-500'}`}>
                         <Timer className="w-3 h-3 sm:w-4 sm:h-4" />
-                        {formatTime(timeLeft)}
+                        {timeLeft > 0 ? formatTime(timeLeft) : '00:00'}
                       </div>
                     </div>
                     <div className="flex items-center gap-1 px-2 py-1 bg-lime-500/10 border border-lime-500/30 rounded-full">
@@ -3181,29 +3384,49 @@ const App: React.FC = () => {
               </div>
 
               {!turnFinished ? (
-                <div className="flex flex-col gap-4">
-                  <div className="flex items-center gap-4 px-2">
-                    <div className="flex-1 h-2 bg-slate-800 rounded-full overflow-hidden">
-                      <div 
-                        className="h-full bg-gradient-to-r from-indigo-600 to-indigo-400 transition-all duration-500" 
-                        style={{ width: `${((currentQuestionIndex + 1) / currentQuestionSet.length) * 100}%` }}
-                      ></div>
+                <>
+                  <div className="flex flex-col gap-4">
+                  {currentQuestionSet.length > 0 && currentQuestionIndex < currentQuestionSet.length && currentStudent ? (
+                    <>
+                      <div className="flex items-center gap-4 px-2">
+                        <div className="flex-1 h-2 bg-slate-800 rounded-full overflow-hidden">
+                          <div 
+                            className="h-full bg-gradient-to-r from-indigo-600 to-indigo-400 transition-all duration-500" 
+                            style={{ width: `${((currentQuestionIndex + 1) / currentQuestionSet.length) * 100}%` }}
+                          ></div>
+                        </div>
+                        <span className="text-[10px] font-black text-slate-500 uppercase whitespace-nowrap">Câu {currentQuestionIndex + 1} / {currentQuestionSet.length}</span>
+                      </div>
+                      <QuestionCard 
+                        key={`exam-${currentQuestionIndex}`}
+                        question={currentQuestionSet[currentQuestionIndex]} 
+                        studentName={currentStudent?.name || "Teacher Preview"}
+                        onAnswered={handleAnswered}
+                        images={lessonParsed?.mediaFiles}
+                        allowTranslation={allowTranslation}
+                        showHints={showHints}
+                      />
+                    </>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center py-20 bg-slate-900/50 rounded-2xl border border-dashed border-slate-700">
+                      <Loader2 className="w-10 h-10 text-slate-600 animate-spin mb-4" />
+                      <p className="text-slate-500 font-bold uppercase tracking-widest text-[8px]">Đang chuẩn bị câu hỏi và cấu hình...</p>
+                      <button 
+                        onClick={() => {
+                          setIsExamActive(false);
+                          setActiveTab('exam');
+                        }}
+                        className="mt-4 px-4 py-2 bg-rose-600 text-white font-bold text-[10px] rounded-lg"
+                      >
+                        THOÁT PHÒNG THI
+                      </button>
                     </div>
-                    <span className="text-[10px] font-black text-slate-500 uppercase whitespace-nowrap">Câu {currentQuestionIndex + 1} / {currentQuestionSet.length}</span>
-                  </div>
-                  <QuestionCard 
-                    key={`exam-${currentQuestionIndex}`}
-                    question={currentQuestionSet[currentQuestionIndex]} 
-                    studentName={currentStudent?.name || ""}
-                    onAnswered={handleAnswered}
-                    images={lessonParsed?.mediaFiles}
-                    allowTranslation={allowTranslation}
-                    showHints={showHints}
-                  />
+                  )}
+                </div>
 
-                  {/* Icon Copy Link (Bảo mật) */}
-                  <div className="absolute bottom-4 right-4 flex items-center gap-2 z-50">
-                    {showCopyPasswordInput && (
+                {/* Icon Copy Link (Bảo mật) */}
+                <div className="absolute bottom-4 right-4 flex items-center gap-2 z-50">
+                  {showCopyPasswordInput && (
                       <input 
                         type="password"
                         placeholder="Pass..."
@@ -3224,7 +3447,7 @@ const App: React.FC = () => {
                       <Copy className="w-5 h-5" />
                     </button>
                   </div>
-                </div>
+                </>
               ) : (
                 <div className="glass rounded-3xl p-10 border-indigo-500/40 flex flex-col items-center justify-center text-center animate-in zoom-in-95 duration-500">
                   {(() => {
@@ -3484,6 +3707,7 @@ const App: React.FC = () => {
                       </button>
                     </div>
                   ) : (
+                    currentStudent && currentQuestionSet.length > 0 ? (
                     <QuestionCard 
                       key={`${currentStudent.id}-${currentQuestionIndex}`}
                       question={currentQuestionSet[currentQuestionIndex]} 
@@ -3499,6 +3723,12 @@ const App: React.FC = () => {
                       allowTranslation={allowTranslation}
                       showHints={showHints}
                     />
+                    ) : (
+                      <div className="flex flex-col items-center justify-center py-20 bg-slate-900/40 rounded-3xl border border-dashed border-slate-800">
+                         <Play className="w-10 h-10 text-slate-700 mb-4" />
+                         <p className="text-slate-500 font-bold uppercase tracking-widest text-xs">Chưa có người tham gia</p>
+                      </div>
+                    )
                   )}
                 </div>
               )}
@@ -3797,6 +4027,18 @@ const App: React.FC = () => {
       </main>
       ) : activeTab === 'monitoring' ? (
         <MonitoringTab students={monitoredStudents} wsStatus={wsStatus} />
+      ) : activeTab === 'bank-checker' ? (
+        <div className="max-w-7xl mx-auto h-[85vh]">
+          <BankCheckerTab 
+            initialQuestions={questionBank}
+            onSaveToBank={(updatedQuestions) => {
+              setQuestionBank(updatedQuestions);
+              setActiveTab('dashboard');
+              alert('Đã cập nhật ngân hàng câu hỏi thành công!');
+            }}
+            onClose={() => setActiveTab('dashboard')}
+          />
+        </div>
       ) : activeTab === 'flashcards' ? (
         <div className="max-w-7xl mx-auto animate-in fade-in slide-in-from-bottom-8 duration-700">
           <div className="flex items-center justify-between mb-6">
@@ -3875,7 +4117,7 @@ const App: React.FC = () => {
         <p>&copy; 2026 CÔ HUYỀN PRO - Giải pháp ôn tập  dựa trên AI</p>
         <p className="mt-2">Liên hệ tư vấn phần mềm: 0988771339</p>
         <a 
-          href="https://conlaso1-trung-tam-toan-anh.vercel.app/" 
+          href="https://trung-tam-toan-anh-conlaso1.vercel.app/" 
           target="_blank" 
           rel="noopener noreferrer"
           className="mt-6 block text-emerald-500 hover:text-emerald-400 transition-colors text-base font-black uppercase tracking-tight"
@@ -4534,7 +4776,7 @@ const App: React.FC = () => {
                               onChange={e => setHintsPassInput(e.target.value)}
                               onKeyDown={e => {
                                 if (e.key === 'Enter') {
-                                  if (hintsPassInput === '2021') {
+                                  if (hintsPassInput === MASTER_PASS) {
                                     setShowHints(true);
                                     setIsEnteringHintsPass(false);
                                     setHintsPassInput('');
@@ -4550,7 +4792,7 @@ const App: React.FC = () => {
                             />
                             <button 
                               onClick={() => {
-                                if (hintsPassInput === '2021') {
+                                if (hintsPassInput === MASTER_PASS) {
                                   setShowHints(true);
                                   setIsEnteringHintsPass(false);
                                   setHintsPassInput('');

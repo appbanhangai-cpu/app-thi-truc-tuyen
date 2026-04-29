@@ -58,6 +58,17 @@ const oauth2Client = new google.auth.OAuth2(
 
 const state = loadData();
 
+// Helper to get Google Sheet URL with prioritized fallback
+const getGoogleSheetUrl = () => {
+    const envUrl = process.env.GOOGLE_SHEET_WEBAPP_URL;
+    const stateUrl = state.googleSheetUrl;
+    const isValidWebAppUrl = (url: string | undefined) => url && url.trim() && url.startsWith('https://script.google.com/macros/s/');
+    
+    if (isValidWebAppUrl(stateUrl)) return stateUrl.trim();
+    if (isValidWebAppUrl(envUrl)) return envUrl!.trim();
+    return DEFAULT_STATE.googleSheetUrl;
+};
+
 async function syncToDrive() {
     const tokens = state.googleTokens;
     const fileId = state.googleDriveFileId;
@@ -72,9 +83,17 @@ async function syncToDrive() {
     } catch (error) { console.error('[Drive] Sync Error:', error); }
 }
 
+// Request logging for debugging
+app.use((req, res, next) => {
+    if (req.url.startsWith('/api/')) {
+        console.log(`[API Request] ${new Date().toISOString()} - ${req.method} ${req.url}`);
+    }
+    next();
+});
+
 // API Routes
-app.get("/api/health", (req, res) => res.json({ status: "ok", vercel: true }));
-app.get("/api/ping", (req, res) => res.json({ pong: true }));
+app.get("/api/health", (req, res) => res.json({ status: "ok", vercel: true, version: "1.0.7" }));
+app.get("/health", (req, res) => res.json({ status: "ok", vercel: true, version: "1.0.7", relative: true }));
 
 app.get("/api/bank", (req, res) => res.json({ 
     questionBank: state.questionBank, 
@@ -82,8 +101,14 @@ app.get("/api/bank", (req, res) => res.json({
     allowTranslation: state.allowTranslation, 
     currentSessionId: state.currentSessionId 
 }));
+app.get("/bank", (req, res) => res.json({ 
+    questionBank: state.questionBank, 
+    lessonParsed: state.lessonParsed, 
+    allowTranslation: state.allowTranslation, 
+    currentSessionId: state.currentSessionId 
+}));
 
-app.post("/api/bank", (req, res) => {
+app.post(["/api/bank", "/bank"], (req, res) => {
     if (req.body.questionBank !== undefined) state.questionBank = req.body.questionBank;
     if (req.body.lessonParsed !== undefined) state.lessonParsed = req.body.lessonParsed;
     if (req.body.allowTranslation !== undefined) state.allowTranslation = req.body.allowTranslation;
@@ -92,68 +117,123 @@ app.post("/api/bank", (req, res) => {
     res.json({ success: true });
 });
 
-app.get("/api/results", (req, res) => res.json(state.examResults));
+app.get(["/api/results", "/results"], (req, res) => res.json(state.examResults));
 
-app.post("/api/submit-results", async (req, res) => {
+app.post(["/api/submit-results", "/submit-results"], async (req, res) => {
     try {
         const result = req.body;
+        console.log(`[API] Received submission for student: ${result?.name}`);
+
+        if (!result || Object.keys(result).length === 0) {
+            return res.status(400).json({ error: "Missing result data" });
+        }
+
         if (!result.id) result.id = `res_${Date.now()}`;
         
         const exists = state.examResults.some((r: any) => r.id === result.id);
         if (!exists) {
-            state.examResults = [result, ...state.examResults].slice(0, 100);
+            state.examResults = [result, ...state.examResults].slice(0, 200);
             saveData(state);
             syncToDrive();
         }
 
+        const googleSheetUrl = getGoogleSheetUrl();
         const rank = result.score >= 9 ? "Xuất sắc" : result.score >= 8 ? "Giỏi" : result.score >= 6.5 ? "Khá" : result.score >= 5 ? "Trung bình" : "Yếu";
         
-        // Sync to Google Sheet
+        // Format duration if available
+        let durationDisplay = "...";
+        if (result.duration !== undefined) {
+            const mins = Math.floor(result.duration / 60);
+            const secs = result.duration % 60;
+            durationDisplay = `${mins}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        // Prepare sheet data
         const sheetData = {
             sheetName: "BangDiem", 
-            name: result.name, 
-            className: result.className,
-            subject: state.lessonParsed?.title || "Ôn tập", 
+            name: result.name || "N/A", 
+            className: result.className || "N/A",
+            subject: result.subject || state.lessonParsed?.title || "Ôn tập", 
             correctCount: `${result.correctAnswers || 0}/${result.totalQuestions || 0}`,
             score: Number(result.score || 0), 
             rank: rank,
-            date: new Date().toLocaleDateString('vi-VN'), 
-            time: new Date().toLocaleTimeString('vi-VN')
+            duration: durationDisplay,
+            date: new Date().toLocaleDateString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' }), 
+            time: new Date().toLocaleTimeString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })
         };
 
-        const response = await fetch(state.googleSheetUrl, { 
-            method: 'POST', 
-            headers: { 'Content-Type': 'application/json' }, 
-            body: JSON.stringify(sheetData), 
-            redirect: 'follow' 
-        });
+        console.log(`[API] Syncing to Sheet: ${googleSheetUrl}`);
         
-        res.json({ success: true, sheetSync: response.ok });
+        let syncStatus = "initiated";
+        let attempt = 0;
+        let lastErrorMsg = "";
+
+        while (attempt < 2 && syncStatus !== "success") {
+            attempt++;
+            try {
+                const response = await fetch(googleSheetUrl, { 
+                    method: 'POST', 
+                    headers: { 'Content-Type': 'application/json' }, 
+                    body: JSON.stringify(sheetData), 
+                    redirect: 'follow' 
+                });
+                
+                const respText = await response.text();
+                console.log(`[API] Sheet Response (Attempt ${attempt}):`, respText.substring(0, 100));
+                
+                if (response.ok || respText.toLowerCase().includes("success")) {
+                    syncStatus = "success";
+                } else {
+                    syncStatus = `failed: ${response.status}`;
+                    lastErrorMsg = respText;
+                }
+            } catch (err: any) {
+                console.error(`[API] Sheet Sync Error (Attempt ${attempt}):`, err.message);
+                syncStatus = `error: ${err.message}`;
+                lastErrorMsg = err.message;
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+        }
+        
+        res.json({ 
+            success: syncStatus === "success", 
+            sheetSync: syncStatus === "success", 
+            details: syncStatus !== "success" ? lastErrorMsg.substring(0, 100) : undefined
+        });
     } catch (e: any) { 
+        console.error("[API] Critical Error:", e.message);
         res.status(500).json({ error: e.message }); 
     }
 });
 
-app.post("/api/start-exam", async (req, res) => {
-    const { name, className } = req.body;
+app.post(["/api/start-exam", "/start-exam"], async (req, res) => {
+    const { name, className, subject } = req.body;
+    const googleSheetUrl = getGoogleSheetUrl();
     const sheetData = {
-        sheetName: "BangDiem", name: name, className: className,
-        subject: state.lessonParsed?.title || "Ôn tập", correctCount: "Đang thi...", score: "...", rank: "Đang làm bài",
-        date: new Date().toLocaleDateString('vi-VN'), time: new Date().toLocaleTimeString('vi-VN')
+        sheetName: "BangDiem", 
+        name: name, 
+        className: className,
+        subject: subject || state.lessonParsed?.title || "Ôn tập", 
+        correctCount: "Đang thi...", 
+        score: "...", 
+        rank: "Đang làm bài",
+        duration: "...",
+        date: new Date().toLocaleDateString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' }), 
+        time: new Date().toLocaleTimeString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })
     };
     try {
-        await fetch(state.googleSheetUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sheetData), redirect: 'follow' });
+        await fetch(googleSheetUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sheetData), redirect: 'follow' });
     } catch (e) {}
     res.json({ success: true });
 });
 
-app.get('/api/auth/google/url', (req, res) => {
+app.get(['/api/auth/google/url', '/auth/google/url'], (req, res) => {
     const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${req.headers['x-forwarded-proto'] || 'http'}://${req.headers.host}/api/auth/google/callback`;
     const url = oauth2Client.generateAuthUrl({ access_type: 'offline', scope: ['https://www.googleapis.com/auth/drive.file', 'https://www.googleapis.com/auth/userinfo.email'], prompt: 'consent', redirect_uri: redirectUri });
     res.json({ url });
 });
 
-app.get('/api/auth/google/callback', async (req, res) => {
+app.get(['/api/auth/google/callback', '/auth/google/callback'], async (req, res) => {
     const { code } = req.query;
     try {
         const { tokens } = await oauth2Client.getToken(code as string);
@@ -163,14 +243,21 @@ app.get('/api/auth/google/callback', async (req, res) => {
     } catch (e) { res.status(500).send('Auth failed'); }
 });
 
-app.post('/api/drive/config', (req, res) => {
+app.get(['/api/auth/google/status', '/auth/google/status'], (req, res) => res.json({ authenticated: !!state.googleTokens }));
+
+app.post(['/api/drive/config', '/drive/config'], (req, res) => {
     if (req.body.fileId) { state.googleDriveFileId = req.body.fileId; saveData(state); res.json({ success: true }); }
     else res.status(400).json({ error: 'Missing fileId' });
 });
 
-app.post("/api/config/sheet", (req, res) => {
+app.post(["/api/config/sheet", "/config/sheet"], (req, res) => {
     if (req.body.url !== undefined) { state.googleSheetUrl = req.body.url; saveData(state); res.json({ success: true }); }
     else res.status(400).json({ error: "Missing url" });
+});
+
+// 404 API fallback - ensure JSON is returned for all /api requests
+app.all("/api/*", (req, res) => {
+    res.status(404).json({ error: "API Route not found", path: req.url, method: req.method });
 });
 
 export default app;
